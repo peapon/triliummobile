@@ -195,6 +195,42 @@ cd apps/harmony-probe
 `--e2e` 会把服务端地址与密码编进包里，让应用开机自动配置并同步——因为模拟器能驱动触摸，
 但驱动不了 WebView 的 DOM，否则没法脚本化验证。生产构建不含这些变量，函数是惰性的。
 
+## 在设备上发现并修掉的一个真 bug：时钟偏移
+
+折叠屏模拟器上，每一次同步都失败：
+
+```
+POST /api/login/sync failed (HTTP 401): {"message":"Auth request time is out of sync,
+please check that both client and server have correct time. The difference between
+clocks has to be smaller than 5 minutes"}
+```
+
+模拟器的时钟比宿主机慢了一小时。这正是 ADR §5 里列为"设计风险"的那一条，**在真实设备上第一
+次撞上**。
+
+修法不是让用户自己去对表：**每个响应都带 `Date` 头**，所以偏移是可测量的。传输层现在：
+
+1. 在每次响应上记录 `serverTime - localTime`
+2. 登录失败且原因是时钟时，用测量到的偏移重算时间戳，**重试一次**
+
+修复后同一个设备：
+
+```
+shell: post-capture sync ok=true message="同步完成：拉取 0 项，用时 0.1s"
+```
+
+并且**错误**造成的后果被离线优先设计吸收了：时钟错的那段时间设备上创建的笔记留在本地队列里，
+时钟修正后自动补传——服务端数据库里能看到它们全部到齐。
+
+## 设备上创建的笔记（读服务端数据库确认）
+
+```
+FOUND nphsq9BOXYyg  鸿蒙设备速记 013516      （Mate 90 Pro）
+FOUND zV9FheB6b9jG  鸿蒙平板速记 014726      （时钟错的那段，后来补传）
+FOUND keQyuGvjOUuq  鸿蒙平板速记 014726
+FOUND vicvRiJItfj1  鸿蒙折叠屏速记 014946    （修复后）
+```
+
 ## 尚未做
 
 - **真机**：需要华为账号实名认证 + 设备绑定证书。模拟器覆盖了绝大部分运行时问题，但

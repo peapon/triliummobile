@@ -88,6 +88,15 @@ export class SyncTransport {
 
   private _serverInstanceId: string | null = null;
 
+  /**
+   * Server clock minus local clock, in milliseconds.
+   *
+   * The sync login is refused when the two differ by more than five minutes — a real failure, first
+   * seen on a HarmonyOS emulator whose clock ran an hour behind the host. Every response carries a
+   * `Date` header, so the offset is measurable rather than something the user has to notice and fix.
+   */
+  private clockOffsetMs = 0;
+
   syncVersion: number;
   maxBlobContentSize: number;
 
@@ -145,7 +154,31 @@ export class SyncTransport {
 
     const response = await this.fetchImpl(`${this.serverHost}${path}`, { ...init, headers });
     this.captureCookies(response);
+    this.measureClockOffset(response);
     return response;
+  }
+
+  /**
+   * Track how far the server's clock is from ours.
+   *
+   * `Date` has one-second resolution, which is ample against a five-minute tolerance. A missing or
+   * unparseable header leaves the previous estimate alone rather than resetting it to zero.
+   */
+  private measureClockOffset(response: Response): void {
+    const header = response.headers.get("date");
+    if (!header) return;
+
+    const serverTime = Date.parse(header);
+    if (!Number.isFinite(serverTime)) return;
+
+    // Half the round trip is the best estimate of one-way latency, and it is a rounding error
+    // against the tolerance being protected.
+    this.clockOffsetMs = serverTime - Date.now();
+  }
+
+  /** Local time corrected for the measured skew — the clock the login HMAC is built from. */
+  private serverAlignedNow(): Date {
+    return new Date(Date.now() + this.clockOffsetMs);
   }
 
   /** Throw a `SyncError` carrying the server's message and status. */
@@ -188,24 +221,42 @@ export class SyncTransport {
    * 401 that says nothing about the password.
    */
   async login(): Promise<LoginResponse> {
-    const timestamp = utcDateTimeStr();
-    const hash = hmacSha256Base64(this.documentSecret, timestamp);
+    // Two attempts, because the first one is how a skewed clock is discovered: the `Date` header of
+    // the refusal tells us the offset, and the retry is then built from the server's clock.
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const timestamp = utcDateTimeStr(this.serverAlignedNow());
+      const hash = hmacSha256Base64(this.documentSecret, timestamp);
 
-    const response = await this.request("/api/login/sync", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ timestamp, syncVersion: this.syncVersion, hash })
-    });
+      const response = await this.request("/api/login/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ timestamp, syncVersion: this.syncVersion, hash })
+      });
 
-    if (!response.ok) await this.fail(response, "POST /api/login/sync");
+      if (response.ok) {
+        const body = (await response.json()) as LoginResponse;
+        if (!body?.instanceId) {
+          throw new SyncError("Login succeeded but the server returned no instanceId");
+        }
 
-    const body = (await response.json()) as LoginResponse;
-    if (!body?.instanceId) {
-      throw new SyncError("Login succeeded but the server returned no instanceId");
+        this._serverInstanceId = body.instanceId;
+        return body;
+      }
+
+      const detail = await response.text().catch(() => "");
+      const clockSkew = response.status === 401 && /out of sync|clock/i.test(detail);
+
+      if (!clockSkew || attempt === 1) {
+        throw new SyncError(
+          `POST /api/login/sync failed (HTTP ${response.status}): ${detail.slice(0, 400)}`,
+          response.status
+        );
+      }
+
+      // `request` has already recorded the offset from this response's Date header.
     }
 
-    this._serverInstanceId = body.instanceId;
-    return body;
+    throw new SyncError("POST /api/login/sync failed after correcting for clock skew");
   }
 
   /**

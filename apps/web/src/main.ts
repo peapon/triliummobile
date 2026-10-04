@@ -223,6 +223,49 @@ async function captureForTest(): Promise<void> {
 }
 
 /**
+ * Report the layout the device actually chose, and exercise the editing write path.
+ *
+ * Both matter on a form factor the browser tests cannot speak for. The viewport decides which of the
+ * two layouts runs — the phone's single pane or the tablet's two — and editing is a write path that
+ * has never run on a device.
+ */
+async function selfTestOnDevice(): Promise<void> {
+  if (!import.meta.env?.VITE_E2E_SERVER) return;
+
+  console.log(
+    `device: viewport ${window.innerWidth}x${window.innerHeight} ` +
+      `dpr=${window.devicePixelRatio} pad=${isPad()}`
+  );
+
+  const marker = import.meta.env?.VITE_E2E_EDIT;
+  if (!marker) return;
+
+  try {
+    // Edit through the same call the tablet's editor makes on save.
+    const candidates = await api.search(marker);
+    if (candidates.length === 0) {
+      console.log(`device: no note matching "${marker}" to edit`);
+      return;
+    }
+
+    const target = candidates[0]!;
+    const before = await api.getNote(target.noteId);
+    const edited = `${before?.content ?? ""}<p>${marker} 已编辑</p>`;
+
+    await api.updateNoteContent(target.noteId, edited);
+    console.log(`device: edited ${target.noteId} locally`);
+
+    await refreshChrome();
+    console.log(`device: pending after edit = ${state.pending}`);
+
+    await runSync();
+    console.log(`device: post-edit sync ok=${state.lastOk} message="${state.lastMessage}"`);
+  } catch (error) {
+    console.log(`device: edit failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/**
  * Configure from build-time credentials, for the on-device end-to-end run.
  *
  * A shipped build has neither variable set, so this is inert in production. It exists because the
@@ -253,6 +296,7 @@ async function autoConfigureForTest(): Promise<void> {
     );
 
     await captureForTest();
+    await selfTestOnDevice();
   } catch (error) {
     console.log(`shell: auto-configure failed: ${error instanceof Error ? error.message : error}`);
   }
