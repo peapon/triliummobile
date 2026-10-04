@@ -9,13 +9,19 @@ import { BlobCache, DEFAULT_BLOB_CACHE_BYTES } from "../../../src/store/blob-cac
 import { NoteQueries } from "./data.js";
 import type { HttpRelayResult, MainMessage } from "./rpc.js";
 import type { ProgressEvent, RpcRequest, WorkerMessage } from "./rpc.js";
-import { LocalStore, OPTION_DOCUMENT_SECRET, OPTION_SYNC_MAX_BLOB_CONTENT_SIZE, OPTION_SYNC_SERVER_HOST } from "../../../src/store/local-store.js";
+import {
+  LocalStore,
+  OPTION_BLOB_CACHE_BUDGET,
+  OPTION_DOCUMENT_SECRET,
+  OPTION_SYNC_MAX_BLOB_CONTENT_SIZE,
+  OPTION_SYNC_SERVER_HOST
+} from "../../../src/store/local-store.js";
 import { openSqliteWasmDatabase } from "../../../src/store/sqlite-wasm.js";
 import { SyncEngine } from "../../../src/sync/engine.js";
 import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/transport.js";
 
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
-const OPTION_BLOB_BUDGET = "triliumMobile.blobCacheBudget";
+
 const ROOT_NOTE_ID = "root";
 
 let store: LocalStore;
@@ -126,7 +132,7 @@ async function ensureSession(): Promise<SyncTransport> {
 }
 
 function blobBudgetBytes(): number {
-  const raw = store.getOption(OPTION_BLOB_BUDGET);
+  const raw = store.getOption(OPTION_BLOB_CACHE_BUDGET);
   const parsed = raw === null ? DEFAULT_BLOB_CACHE_BYTES : Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BLOB_CACHE_BYTES;
 }
@@ -230,8 +236,26 @@ async function configure(serverHost: string, password: string): Promise<void> {
     throw new Error("服务端没有返回 documentId / documentSecret，密码可能不正确。");
   }
 
+  // Decide *after* the server has answered and the seed has been read, never before: a mistyped
+  // address or a wrong password must leave the existing replica untouched.
+  const previousDocumentId = store.documentId;
+  const switchingVault = previousDocumentId !== null && previousDocumentId !== documentId;
+
+  if (switchingVault) {
+    // The replica belongs to the old vault. Keeping it would leave those rows in place while the
+    // cursors still index the old server's journal, and the next sync would push them to the new
+    // server — interleaving two vaults irreversibly.
+    report({
+      phase: "connecting",
+      message: "检测到不同的知识库，正在清除本地副本…"
+    });
+    store.wipeReplica();
+    peerInstanceId = null;
+  }
+
   store.setOption(OPTION_SYNC_SERVER_HOST, serverHost.replace(/\/+$/, ""));
   store.setOption(OPTION_DOCUMENT_SECRET, documentSecret);
+  store.documentId = documentId;
   session = null;
 }
 
@@ -423,15 +447,27 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     case "cacheStats":
       return { ...store.cacheStats(), budget: blobBudgetBytes() };
     case "setBlobBudget":
-      store.setOption(OPTION_BLOB_BUDGET, String(request.params[0]));
+      store.setOption(OPTION_BLOB_CACHE_BUDGET, String(request.params[0]));
       store.evictBlobs(request.params[0]);
       return undefined;
     case "reset":
+      // "Reconfigure" means start over, so the replica goes with the credentials.
+      store.wipeReplica();
       store.setOption(OPTION_DOCUMENT_SECRET, "");
       store.setOption(OPTION_SYNC_SERVER_HOST, "");
       peerInstanceId = null;
       session = null;
       return undefined;
+    case "clearLocalData":
+      store.wipeReplica();
+      peerInstanceId = null;
+      return undefined;
+    case "vaultInfo":
+      return {
+        serverHost: store.getOption(OPTION_SYNC_SERVER_HOST),
+        documentId: store.documentId,
+        counts: queries.counts()
+      };
   }
 }
 

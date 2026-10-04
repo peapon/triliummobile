@@ -11,6 +11,7 @@
  */
 
 import { toSnippet, type NoteDetail, type NoteSummary } from "./data.js";
+import { icon } from "./icons.js";
 import { InkCanvas, createInkDoc, paintInk, parseInkDoc, serializeInkDoc } from "./ink.js";
 import { hasNativeBridge, nativeFetch } from "./native-fetch.js";
 import { WorkerClient, type AppCounts, type ProgressEvent } from "./rpc.js";
@@ -31,13 +32,14 @@ interface AppState {
   progress: ProgressEvent | null;
   lastMessage: string;
   lastOk: boolean;
-  toast: { text: string; bad: boolean } | null;
   /** Detail-view mode. Editing and ink are tablet features; the phone stays read-only by design. */
   detailMode: DetailMode;
   /** Set when the ink layer has unsaved strokes. */
   inkDirty: boolean;
   /** Set when the note currently has an ink attachment, so the layer must be drawn. */
   hasInk: boolean;
+  /** The settings screen is a navigation step, so the back gesture closes it. */
+  settingsOpen: boolean;
 }
 
 type DetailMode = "view" | "edit" | "ink";
@@ -65,10 +67,10 @@ const state: AppState = {
   progress: null,
   lastMessage: "",
   lastOk: true,
-  toast: null,
   detailMode: "view",
   inkDirty: false,
-  hasInk: false
+  hasInk: false,
+  settingsOpen: false
 };
 
 let inkCanvas: InkCanvas | null = null;
@@ -159,10 +161,54 @@ api.progressHandler = (progress) => {
   }
 };
 
+// ------------------------------------------------------------------ navigation
+
+/**
+ * Record a step the back gesture should undo.
+ *
+ * The shell forwards its back button by calling `WebviewController.backward()`, which fires
+ * `popstate` here — so the WebView's own history is the whole back stack and the shell needs no
+ * knowledge of the app's structure.
+ */
+function pushStep(): void {
+  history.pushState({ triliumStep: true }, "");
+}
+
+/**
+ * Undo one step. Returns whether anything was undone, so the shell can decide between closing the
+ * overlay and letting the system exit.
+ */
+function stepBack(): boolean {
+  if (state.openNoteId !== null) {
+    state.openNoteId = null;
+    state.detailMode = "view";
+    void render();
+    return true;
+  }
+
+  if (state.settingsOpen) {
+    state.settingsOpen = false;
+    void render();
+    return true;
+  }
+
+  return false;
+}
+
+window.addEventListener("popstate", () => {
+  stepBack();
+});
+
+/**
+ * Exposed for the shell as a fallback: if a device runs the back gesture without the WebView
+ * reporting backward history, the page can still be told directly.
+ */
+(globalThis as unknown as { __triliumBack?: () => boolean }).__triliumBack = stepBack;
+
 // ---------------------------------------------------------------------- boot
 
 async function boot(): Promise<void> {
-  app.innerHTML = `<div class="empty">正在打开本地数据库…</div>`;
+  renderBootSkeleton();
 
   try {
     await api.ready();
@@ -184,11 +230,11 @@ async function boot(): Promise<void> {
     // throw here is invisible.
     console.log(`shell: boot failed: ${error instanceof Error ? error.stack ?? error.message : error}`);
 
-    app.innerHTML = `
+    commit(`
       <div class="setup">
         <h2>无法打开本地数据库</h2>
         <p>${escapeHtml(String(error))}</p>
-      </div>`;
+      </div>`);
   }
 }
 
@@ -266,6 +312,54 @@ async function selfTestOnDevice(): Promise<void> {
 }
 
 /**
+ * Point the client at a *second* vault and prove the first one's replica is gone.
+ *
+ * The marker note exists only in the first vault. If the replica were not wiped on the switch, it
+ * would still be here afterwards — and the following sync would push it, and everything else from
+ * the first vault, into the second. So the test asserts the marker disappears locally *before* any
+ * sync, and the server-side check confirms it never arrives.
+ */
+async function vaultSwitchTest(): Promise<void> {
+  const serverB = import.meta.env?.VITE_E2E_SERVER_B;
+  const passwordB = import.meta.env?.VITE_E2E_PASSWORD_B;
+  const marker = import.meta.env?.VITE_E2E_CAPTURE;
+
+  if (!serverB || !passwordB || !marker) return;
+
+  try {
+    const before = await api.counts();
+    const foundBefore = (await api.search(marker)).length;
+    const vaultA = await api.vaultInfo();
+
+    console.log(
+      `vaultswitch: BEFORE notes=${before.notes} markerHits=${foundBefore} docId=${vaultA.documentId}`
+    );
+
+    await api.configure(serverB, passwordB);
+
+    const afterWipe = await api.counts();
+    const foundAfterWipe = (await api.search(marker)).length;
+    const vaultB = await api.vaultInfo();
+
+    console.log(
+      `vaultswitch: AFTER CONFIGURE notes=${afterWipe.notes} markerHits=${foundAfterWipe} ` +
+        `docId=${vaultB.documentId}`
+    );
+
+    await refreshChrome();
+    await runSync();
+
+    const afterSync = await api.counts();
+    console.log(
+      `vaultswitch: AFTER SYNC notes=${afterSync.notes} pending=${state.pending} ` +
+        `ok=${state.lastOk} message="${state.lastMessage}"`
+    );
+  } catch (error) {
+    console.log(`vaultswitch: failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/**
  * Configure from build-time credentials, for the on-device end-to-end run.
  *
  * A shipped build has neither variable set, so this is inert in production. It exists because the
@@ -297,9 +391,29 @@ async function autoConfigureForTest(): Promise<void> {
 
     await captureForTest();
     await selfTestOnDevice();
+    await vaultSwitchTest();
   } catch (error) {
     console.log(`shell: auto-configure failed: ${error instanceof Error ? error.message : error}`);
   }
+}
+
+/**
+ * The shape of the screen, before the data exists.
+ *
+ * A single line of grey text is the first thing the app shows, and it is the one screen guaranteed
+ * to be seen on every launch.
+ */
+function renderBootSkeleton(): void {
+  app.innerHTML = `
+    <div class="appbar"><h1>TriliumMobile</h1><span class="status">正在打开本地数据库…</span></div>
+    <div class="view">
+      ${Array.from({ length: 5 }, () => `
+        <div class="skeleton" style="padding:16px;margin-bottom:8px">
+          <div class="skeleton skeleton-line" style="width:70%"></div>
+          <div class="skeleton skeleton-line short" style="margin-bottom:0"></div>
+        </div>`).join("")}
+    </div>
+  `;
 }
 
 /** Small pieces of cross-view state, refreshed after actions rather than on every render. */
@@ -310,6 +424,24 @@ async function refreshChrome(): Promise<void> {
 }
 
 // -------------------------------------------------------------------- render
+
+/**
+ * Put new markup on the page.
+ *
+ * The app replaces its whole body on every navigation, which is why it used to flash. The obvious
+ * fix is `document.startViewTransition` — ArkWeb is Chromium 144, so every target has it — but it
+ * was tried and reverted: **while a transition is in flight the page is not hit-testable.**
+ * Measured on this app, `document.elementFromPoint` over the ink canvas returned `<html>` while
+ * `activeViewTransition` was set, and the canvas itself once it cleared. That is a ~250ms window on
+ * every navigation in which taps and strokes are silently dropped, which is a bad trade for an app
+ * whose whole point is fast capture.
+ *
+ * Continuity comes from CSS animations on insertion instead (`.view`, `.detail`): the same sense of
+ * movement, with nothing removed from the hit-test tree.
+ */
+function commit(html: string): void {
+  app.innerHTML = html;
+}
 
 async function render(): Promise<void> {
   inkCanvas?.destroy();
@@ -323,13 +455,12 @@ async function render(): Promise<void> {
   const view = await renderView();
   const detail = state.openNoteId ? await renderDetail(state.openNoteId) : "";
 
-  app.innerHTML = `
+  commit(`
     ${renderAppbar()}
     <div class="view" id="view">${view}</div>
     ${renderTabbar()}
     ${detail}
-    ${state.toast ? `<div class="toast ${state.toast.bad ? "bad" : ""}">${escapeHtml(state.toast.text)}</div>` : ""}
-  `;
+  `);
 
   measureAppBar();
   wire();
@@ -365,21 +496,21 @@ function renderAppbar(): string {
       <h1>TriliumMobile</h1>
       <span class="status ${statusClass}" id="status">${escapeHtml(label)}</span>
       <button id="sync" ${state.syncing ? "disabled" : ""}>${state.syncing ? "…" : "同步"}</button>
-      <button id="settings" class="ghost" aria-label="设置">⚙</button>
+      <button id="settings" class="icon-only" aria-label="设置">${icon("settings", "icon-lg")}</button>
     </div>
   `;
 }
 
 function renderTabbar(): string {
-  const tab = (id: Tab, glyph: string, label: string) =>
+  const tab = (id: Tab, iconName: string, label: string) =>
     `<button data-tab="${id}" aria-selected="${state.tab === id}">
-       <span class="glyph">${glyph}</span><span>${label}</span>
+       ${icon(iconName)}<span>${label}</span>
      </button>`;
 
   return `<nav class="tabbar">
-    ${tab("capture", "✎", "速记")}
-    ${tab("search", "⌕", "速查")}
-    ${tab("browse", "☰", "浏览")}
+    ${tab("capture", "write", "速记")}
+    ${tab("search", "search", "速查")}
+    ${tab("browse", "browse", "浏览")}
   </nav>`;
 }
 
@@ -438,7 +569,7 @@ async function renderBrowse(): Promise<string> {
 
   const crumbs = trail
     .map((crumb, index) => `<span data-crumb="${index}">${escapeHtml(crumb.title)}</span>`)
-    .join(" <span>›</span> ");
+    .join(`<span class="sep">›</span>`);
 
   const body =
     children.length === 0
@@ -515,7 +646,7 @@ async function renderDetail(noteId: string): Promise<string> {
                <span class="attachment-meta">${escapeHtml(attachment.mime || attachment.role)}</span>
                ${
                  attachment.stubbed
-                   ? `<button data-fetch-attachment="${attachment.attachmentId}">下载</button>`
+                   ? `<button data-fetch-attachment="${attachment.attachmentId}">${icon("download")} 下载</button>`
                    : `<span class="attachment-meta">已缓存</span>`
                }
              </div>`
@@ -547,7 +678,7 @@ async function renderDetail(noteId: string): Promise<string> {
   return `
     <div class="detail" data-mode="${state.detailMode}">
       <div class="appbar">
-        <button id="detail-back" class="ghost" aria-label="返回">‹ 返回</button>
+        <button id="detail-back" class="ghost">${icon("back")} 返回</button>
         <h1>${escapeHtml(note.title || "(无标题)")}</h1>
       </div>
       ${toolbar}
@@ -625,12 +756,17 @@ function wire(): void {
     button.addEventListener("click", () => {
       state.tab = button.dataset.tab as Tab;
       state.openNoteId = null;
+      state.settingsOpen = false;
       void render();
     });
   });
 
   document.getElementById("sync")?.addEventListener("click", () => void runSync());
-  document.getElementById("settings")?.addEventListener("click", () => void renderSettings());
+  document.getElementById("settings")?.addEventListener("click", () => {
+    state.settingsOpen = true;
+    pushStep();
+    void renderSettings();
+  });
 
   wireCapture();
   wireSearch();
@@ -643,9 +779,8 @@ function wire(): void {
   });
 
   document.getElementById("detail-back")?.addEventListener("click", () => {
-    state.openNoteId = null;
-    state.detailMode = "view";
-    void render();
+    // Go through history so the hardware back button and this button share one stack.
+    history.back();
   });
 
   if (state.openNoteId) void wireDetail(state.openNoteId);
@@ -661,12 +796,10 @@ async function wireDetail(noteId: string): Promise<void> {
   const canvas = document.getElementById("ink-layer") as HTMLCanvasElement | null;
 
   if (canvas && state.detailMode === "ink") {
-    const stored = await api.loadInk(noteId);
-    const doc = stored.doc
-      ? parseInkDoc(stored.doc)
-      : createInkDoc(aspectOf(canvas));
-
-    inkCanvas = new InkCanvas(canvas, doc, {
+    // The canvas becomes live *before* the stored strokes are read back. Awaiting the attachment
+    // first leaves the element visible but inert, so a stroke drawn in that window is simply lost —
+    // and the window is a network-shaped one, not a frame.
+    inkCanvas = new InkCanvas(canvas, createInkDoc(aspectOf(canvas)), {
       color: currentInkColor,
       width: currentInkWidth,
       onChange: () => {
@@ -680,6 +813,10 @@ async function wireDetail(noteId: string): Promise<void> {
     requestAnimationFrame(() => {
       inkCanvas?.resize();
       updateInkHint();
+    });
+
+    void api.loadInk(noteId).then((stored) => {
+      if (stored.doc && inkCanvas) inkCanvas.setDocument(parseInkDoc(stored.doc));
     });
   } else if (canvas && state.hasInk) {
     // Read-only display: the phone annotates nothing, but it must still show what a tablet drew.
@@ -903,6 +1040,7 @@ app.addEventListener("click", (event) => {
     state.browsePath = [...state.browsePath, noteId];
   } else {
     state.openNoteId = noteId;
+    pushStep();
   }
 
   void render();
@@ -934,13 +1072,13 @@ async function runSync(): Promise<void> {
 
 // -------------------------------------------------------------------- setup
 
-function renderSetup(error?: string): void {
+async function renderSetup(error?: string): Promise<void> {
   // In a browser the only address that can work is this page's own origin (the server sends
   // `Cross-Origin-Resource-Policy: same-origin`). Inside the shell the request goes out natively, so
   // the field must hold the server's real address instead.
   const host = state.serverHost ?? (hasNativeBridge() ? "" : location.origin);
 
-  app.innerHTML = `
+  commit(`
     <div class="setup">
       <h2>连接 Trilium 服务端</h2>
       <p>
@@ -970,19 +1108,19 @@ function renderSetup(error?: string): void {
         部署在服务端同源之下（或由原生外壳代为转发请求）。
       </p>
     </div>
-  `;
+  `);
 
   document.getElementById("connect")?.addEventListener("click", async () => {
     const serverHost = (document.getElementById("server") as HTMLInputElement).value.trim();
     const password = (document.getElementById("password") as HTMLInputElement).value;
 
     if (!serverHost || !password) {
-      renderSetup("请填写服务端地址和密码");
+      await renderSetup("请填写服务端地址和密码");
       return;
     }
 
     state.busy = true;
-    renderSetup("");
+    await renderSetup("");
 
     try {
       await api.configure(serverHost, password);
@@ -993,27 +1131,34 @@ function renderSetup(error?: string): void {
     } catch (error) {
       state.busy = false;
       await refreshChrome();
-      renderSetup(error instanceof Error ? error.message : String(error));
+      await renderSetup(error instanceof Error ? error.message : String(error));
     }
   });
 }
 
 async function renderSettings(): Promise<void> {
-  const [counts, cap] = await Promise.all([api.counts(), api.maxBlobContentSize()]);
+  const [vault, cap] = await Promise.all([api.vaultInfo(), api.maxBlobContentSize()]);
+  const counts = vault.counts;
   state.openNoteId = null;
+  state.settingsOpen = true;
 
-  app.innerHTML = `
+  commit(`
     <div class="appbar">
-      <button id="settings-back" class="ghost">‹ 返回</button>
+      <button id="settings-back" class="ghost">${icon("back")} 返回</button>
       <h1>设置</h1>
     </div>
     <div class="view">
       <div class="banner">
-        服务端：${escapeHtml(state.serverHost || "(未配置)")}<br />
+        服务端：${escapeHtml(vault.serverHost || "(未配置)")}<br />
+        知识库 ID：<code>${escapeHtml(vault.documentId ?? "(未绑定)")}</code><br />
         本地：${counts.notes.toLocaleString("en-US")} 条笔记 ·
         ${counts.branches.toLocaleString("en-US")} 个分支 ·
         ${counts.attributes.toLocaleString("en-US")} 个属性 ·
         ${counts.blobs.toLocaleString("en-US")} 个内容块
+      </div>
+      <div class="banner">
+        换到<b>另一个知识库</b>时本地副本会自动清除——两个库的实体混在一起是无法复原的。
+        下面的按钮只在你想手动清空时用。
       </div>
       <div class="field">
         <label for="blob-cap">附件同步上限（字节，0 = 不限制）</label>
@@ -1021,10 +1166,11 @@ async function renderSettings(): Promise<void> {
       </div>
       <button id="save-settings" class="primary">保存</button>
       <button id="reconfigure" style="margin-top:10px">重新配置服务端</button>
+      <button id="clear-data" class="danger">清除本地数据（保留连接设置）</button>
     </div>
-  `;
+  `);
 
-  document.getElementById("settings-back")?.addEventListener("click", () => void render());
+  document.getElementById("settings-back")?.addEventListener("click", () => history.back());
 
   document.getElementById("save-settings")?.addEventListener("click", async () => {
     const value = Number((document.getElementById("blob-cap") as HTMLInputElement).value);
@@ -1034,20 +1180,41 @@ async function renderSettings(): Promise<void> {
   });
 
   document.getElementById("reconfigure")?.addEventListener("click", async () => {
+    // Also wipes: "reconfigure" means start over, and leaving the old vault's rows behind is the
+    // bug this button used to have.
     await api.reset();
     await refreshChrome();
-    renderSetup();
+    await renderSetup();
+  });
+
+  document.getElementById("clear-data")?.addEventListener("click", async () => {
+    await api.clearLocalData();
+    await refreshChrome();
+    showToast("本地副本已清除，下次同步会重新拉取", false);
+    await render();
   });
 }
 
 // -------------------------------------------------------------------- helpers
 
+/**
+ * Show a transient message.
+ *
+ * Deliberately does *not* go through `render()`. It used to set state and re-render on a timer,
+ * which meant a toast dismissing two seconds later replaced the entire view — destroying anything
+ * the user had started in the meantime. Drawing a stroke while an earlier toast was still up lost
+ * the stroke, and the same would have happened to a half-typed note. The toast now owns its own
+ * element and touches nothing else.
+ */
 function showToast(text: string, bad: boolean): void {
-  state.toast = { text, bad };
-  window.setTimeout(() => {
-    state.toast = null;
-    void render();
-  }, 2400);
+  document.querySelector(".toast")?.remove();
+
+  const element = document.createElement("div");
+  element.className = bad ? "toast bad" : "toast";
+  element.textContent = text;
+  document.body.appendChild(element);
+
+  window.setTimeout(() => element.remove(), 2400);
 }
 
 function firstLine(text: string): string {

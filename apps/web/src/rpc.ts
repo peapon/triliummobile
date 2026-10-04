@@ -72,6 +72,14 @@ export interface AppApi {
     attachmentId: string
   ): Promise<{ fetched: boolean; stubbed: boolean; bytes: number; error?: string }>;
   cacheStats(): Promise<{ entries: number; bytes: number; stubbed: number; budget: number }>;
+  /** Which vault this replica belongs to, for the settings screen. */
+  vaultInfo(): Promise<{
+    serverHost: string | null;
+    documentId: string | null;
+    counts: AppCounts;
+  }>;
+  /** Discard the local replica without touching the connection settings. */
+  clearLocalData(): Promise<void>;
   setBlobBudget(bytes: number): Promise<void>;
   /**
    * Tell the worker to route HTTP through the native bridge rather than `fetch`.
@@ -190,6 +198,8 @@ export class WorkerClient implements AppApi {
   listAttachments = (noteId: string) => this.call("listAttachments", noteId);
   fetchAttachmentBlob = (attachmentId: string) => this.call("fetchAttachmentBlob", attachmentId);
   cacheStats = () => this.call("cacheStats");
+  vaultInfo = () => this.call("vaultInfo");
+  clearLocalData = () => this.call("clearLocalData");
   setBlobBudget = (bytes: number) => this.call("setBlobBudget", bytes);
   useNativeHttp = (enabled: boolean) => this.call("useNativeHttp", enabled);
   configure = (serverHost: string, password: string) => this.call("configure", serverHost, password);

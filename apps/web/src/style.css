@@ -1,5 +1,5 @@
 /*
- * Phone-first styling.
+ * TriliumMobile — visual foundation.
  *
  * Two constraints shape this file:
  *
@@ -8,39 +8,115 @@
  * 2. Safe-area insets are read through `var(--safe-area-inset-*)` with an `env()` fallback. Android's
  *    WebView reports `env(safe-area-inset-*)` as 0, so the native shell injects the real values as
  *    those custom properties; the fallback covers iOS and desktop browsers, where nothing is injected.
+ *
+ * The palette is warm-neutral rather than blue-grey. Every text pair below was measured against
+ * WCAG before being written down, and the hairlines were solved for rather than guessed: a `1px`
+ * rule that does not clear 1.5:1 against the surface it sits on is invisible, which is what made the
+ * earlier version read as flat. `tools/check-contrast.mjs` re-runs the measurements.
  */
 
 :root {
-  --bg: #0f1115;
-  --surface: #171a21;
-  --surface-2: #1d2129;
-  --border: #262b36;
-  --text: #e8eaed;
-  --muted: #8b93a1;
-  --accent: #6ea8fe;
-  --accent-strong: #4c8dff;
-  --danger: #ff6b6b;
-  --ok: #3ddc84;
-  --warn: #ffc857;
+  /* ---------------------------------------------------------------- palette */
+  /* Warm charcoal rather than the blue-grey default: it reads as paper and ink. */
+  --bg: #121110;
+  --surface: #1b1a18;
+  --surface-2: #252321;
+  --surface-3: #302d2a;
+  --border: #3e3b36;
+  --border-strong: #4a463f;
+  --text: #ece9e4;
+  --muted: #a09890;
+  --faint: #8d867d;
+  --accent: #e0a458;
+  --accent-ink: #121110;
+  --danger: #e88a7d;
+  --ok: #88c98a;
+  --warn: #e0a458;
 
+  /* ------------------------------------------------------------------ type */
+  /* Six steps. The previous version had nine hardcoded sizes, including both 16 and 16.5. */
+  --text-xs: 11px;   /* meta, chips */
+  --text-sm: 13px;   /* secondary, snippets, labels */
+  --text-base: 15px; /* UI default */
+  --text-md: 17px;   /* row titles, screen headlines */
+  --text-lg: 22px;   /* the one display size */
+  --text-reading: 17px; /* note body */
+  --leading-tight: 1.25;
+  --leading-base: 1.5;
+  --leading-reading: 1.75;
+
+  /* --------------------------------------------------------------- spacing */
+  /* A 4px grid. Every gap and pad below is one of these. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  /* ---------------------------------------------------------------- shape */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* ------------------------------------------------------------ elevation */
+  /* Real separation instead of a hairline around every box. The two dark levels are heavier
+     because a shadow on a dark surface has to work harder to be seen at all. */
+  --elev-1: 0 1px 2px rgb(0 0 0 / 30%), 0 1px 1px rgb(0 0 0 / 20%);
+  --elev-2: 0 4px 14px rgb(0 0 0 / 34%), 0 1px 3px rgb(0 0 0 / 22%);
+  --elev-3: 0 18px 44px rgb(0 0 0 / 46%), 0 2px 8px rgb(0 0 0 / 26%);
+
+  /* --------------------------------------------------------------- motion */
+  /* The earlier build had none at all, which is most of why it felt abrupt. */
+  --dur-1: 120ms;
+  --dur-2: 200ms;
+  --dur-3: 320ms;
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ----------------------------------------------------------------- misc */
   --safe-top: var(--safe-area-inset-top, env(safe-area-inset-top));
   --safe-bottom: var(--safe-area-inset-bottom, env(safe-area-inset-bottom));
   --safe-left: var(--safe-area-inset-left, env(safe-area-inset-left));
   --safe-right: var(--safe-area-inset-right, env(safe-area-inset-right));
-
   --tap: 44px;
+  --font-ui: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
 }
 
 @media (prefers-color-scheme: light) {
   :root {
-    --bg: #f6f7f9;
+    /* Warm paper. `danger` and `ok` are their own values here — reusing the dark ones is what left
+       the earlier light theme at 2.78:1 and 1.78:1, both unreadable. */
+    --bg: #faf8f5;
     --surface: #ffffff;
-    --surface-2: #eef0f4;
-    --border: #dfe3ea;
-    --text: #1a1d21;
-    --muted: #6b7280;
-    --accent: #2f6fed;
-    --accent-strong: #1f5bd6;
+    --surface-2: #f3efea;
+    --surface-3: #e9e3dc;
+    --border: #d0c7bc;
+    --border-strong: #bdb2a4;
+    --text: #1b1917;
+    --muted: #6b645d;
+    --faint: #756e67;
+    --accent: #9a5f1e;
+    --accent-ink: #ffffff;
+    --danger: #a62d22;
+    --ok: #2f6b34;
+    --warn: #8a5a12;
+
+    --elev-1: 0 1px 2px rgb(31 26 20 / 8%), 0 1px 1px rgb(31 26 20 / 5%);
+    --elev-2: 0 4px 14px rgb(31 26 20 / 10%), 0 1px 3px rgb(31 26 20 / 7%);
+    --elev-3: 0 18px 44px rgb(31 26 20 / 16%), 0 2px 8px rgb(31 26 20 / 8%);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --dur-1: 1ms;
+    --dur-2: 1ms;
+    --dur-3: 1ms;
   }
 }
 
@@ -59,9 +135,9 @@ body {
 body {
   background: var(--bg);
   color: var(--text);
-  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
-    "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font: var(--text-base) / var(--leading-base) var(--font-ui);
   -webkit-text-size-adjust: 100%;
+  -webkit-font-smoothing: antialiased;
 }
 
 #app {
@@ -72,25 +148,47 @@ body {
   padding-right: var(--safe-right);
 }
 
+/* ------------------------------------------------------------------ icons */
+
+/* Inline SVG, sized to the text around it. Unicode glyphs were used before, and they render
+   differently on every device — wrong weight, wrong baseline, wrong optical size. */
+.icon {
+  width: 1em;
+  height: 1em;
+  flex: 0 0 auto;
+  stroke: currentColor;
+  stroke-width: 1.75;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  fill: none;
+}
+
+.icon-lg {
+  width: 22px;
+  height: 22px;
+}
+
 /* ------------------------------------------------------------------ chrome */
 
 .appbar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: calc(var(--safe-top) + 10px) 14px 10px;
+  gap: var(--space-2);
+  padding: calc(var(--safe-top) + var(--space-3)) var(--space-4) var(--space-3);
   background: var(--surface);
-  border-bottom: 1px solid var(--border);
   position: sticky;
   top: 0;
   z-index: 20;
+  /* A soft edge rather than a hairline: at this width a 1px rule under a sticky bar reads as a
+     seam, while a shadow reads as the bar sitting above the content. */
+  box-shadow: var(--elev-1);
 }
 
 .appbar h1 {
-  font-size: 15px;
-  font-weight: 650;
+  font-size: var(--text-md);
+  font-weight: 640;
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.015em;
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -99,7 +197,7 @@ body {
 }
 
 .status {
-  font-size: 12px;
+  font-size: var(--text-xs);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
@@ -115,34 +213,69 @@ body {
   color: var(--warn);
 }
 
+/* ----------------------------------------------------------------- buttons */
+
 button {
   font: inherit;
   color: inherit;
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 14px;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
   min-height: var(--tap);
   cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--space-2);
+  transition:
+    background var(--dur-1) var(--ease-out),
+    transform var(--dur-1) var(--ease-out),
+    opacity var(--dur-1) var(--ease-out);
 }
 
-button:active {
-  transform: scale(0.98);
+/* Press has to be felt, not just seen: the colour change lands before the scale does. */
+button:active:not(:disabled) {
+  transform: scale(0.975);
+  background: var(--surface-3);
 }
 
 button.primary {
-  background: var(--accent-strong);
-  border-color: var(--accent-strong);
-  color: #fff;
+  background: var(--accent);
+  color: var(--accent-ink);
   font-weight: 600;
+}
+
+button.primary:active:not(:disabled) {
+  background: var(--accent);
+  filter: brightness(0.94);
 }
 
 button.ghost {
   background: transparent;
 }
 
+button.ghost:active:not(:disabled) {
+  background: var(--surface-2);
+}
+
+button.danger {
+  color: var(--danger);
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--border-strong);
+}
+
 button:disabled {
-  opacity: 0.5;
+  opacity: 0.4;
+}
+
+/* An icon-only control is square, so it does not look like a stray word. */
+button.icon-only {
+  padding: 0;
+  width: var(--tap);
+  height: var(--tap);
+  min-height: var(--tap);
+  border-radius: var(--radius-pill);
 }
 
 input,
@@ -150,17 +283,24 @@ textarea {
   font: inherit;
   color: inherit;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 11px 12px;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
   width: 100%;
   min-height: var(--tap);
+  box-shadow: inset 0 0 0 1px var(--border);
+  transition: box-shadow var(--dur-1) var(--ease-out);
+}
+
+input::placeholder,
+textarea::placeholder {
+  color: var(--faint);
 }
 
 input:focus,
 textarea:focus {
-  outline: 2px solid var(--accent);
-  outline-offset: -1px;
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 /* ------------------------------------------------------------------ layout */
@@ -170,38 +310,59 @@ textarea:focus {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding: 14px;
+  padding: var(--space-4);
 }
 
 .tabbar {
   display: flex;
-  border-top: 1px solid var(--border);
   background: var(--surface);
   padding-bottom: var(--safe-bottom);
+  box-shadow: 0 -1px 3px rgb(0 0 0 / 18%);
 }
 
 .tabbar button {
   flex: 1;
-  border: 0;
   border-radius: 0;
   background: transparent;
-  min-height: 56px;
+  min-height: 58px;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 3px;
-  font-size: 11px;
+  gap: var(--space-1);
+  font-size: var(--text-xs);
+  font-weight: 500;
   color: var(--muted);
+  position: relative;
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+/* The selected tab is marked by a short bar as well as colour: colour alone is a weak signal, and
+   it is the only one the previous version had. */
+.tabbar button::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 50%;
+  width: 24px;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--accent);
+  transform: translateX(-50%) scaleX(0);
+  transition: transform var(--dur-2) var(--ease-out);
 }
 
 .tabbar button[aria-selected="true"] {
   color: var(--accent);
 }
 
-.tabbar .glyph {
-  font-size: 19px;
-  line-height: 1;
+.tabbar button[aria-selected="true"]::before {
+  transform: translateX(-50%) scaleX(1);
+}
+
+.tabbar .icon {
+  width: 21px;
+  height: 21px;
 }
 
 /* ----------------------------------------------------------------- capture */
@@ -209,27 +370,44 @@ textarea:focus {
 .quick-note {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   height: 100%;
 }
 
+/* The phone's whole job is this box, so it gets the room and the borders come off. */
 .quick-note textarea {
   flex: 1;
-  min-height: 180px;
+  min-height: 200px;
   resize: none;
-  line-height: 1.6;
+  line-height: var(--leading-reading);
+  font-size: var(--text-reading);
+  background: var(--surface);
+  box-shadow: var(--elev-1);
+}
+
+.quick-note input {
+  box-shadow: none;
+  background: transparent;
+  padding-left: 0;
+  padding-right: 0;
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+.quick-note input:focus {
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
 .capture-actions {
   display: flex;
-  gap: 10px;
+  gap: var(--space-3);
   align-items: center;
 }
 
 .capture-actions .hint {
   flex: 1;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--text-xs);
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------- lists */
@@ -237,51 +415,63 @@ textarea:focus {
 .list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
+/* Cards are separated by elevation, not by a rule around each one. Eight boxes each fenced in 1px
+   is what made a list look like a spreadsheet. */
 .row {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: var(--space-1);
   text-align: left;
+  align-items: stretch;
   background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 12px;
-  padding: 12px;
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
   min-height: var(--tap);
   width: 100%;
+  box-shadow: var(--elev-1);
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+
+.row:active {
+  transform: scale(0.985);
+  background: var(--surface-2);
 }
 
 .row .title {
   font-weight: 600;
-  font-size: 15px;
+  font-size: var(--text-base);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .row .snippet {
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--muted);
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
+  line-height: var(--leading-base);
 }
 
 .row .meta {
-  font-size: 11px;
-  color: var(--muted);
+  font-size: var(--text-xs);
+  color: var(--faint);
   font-variant-numeric: tabular-nums;
 }
 
 .empty {
   color: var(--muted);
   text-align: center;
-  padding: 40px 20px;
-  font-size: 14px;
-  line-height: 1.7;
+  padding: var(--space-8) var(--space-5);
+  font-size: var(--text-sm);
+  line-height: var(--leading-reading);
 }
 
 /* -------------------------------------------------------------- note detail */
@@ -295,180 +485,246 @@ textarea:focus {
   z-index: 40;
   padding-left: var(--safe-left);
   padding-right: var(--safe-right);
+  box-shadow: var(--elev-3);
 }
 
 .detail .body {
   flex: 1;
   overflow-y: auto;
-  padding: 16px;
-  font-size: 16px;
-  line-height: 1.75;
+  padding: var(--space-5) var(--space-4) var(--space-8);
+  font-size: var(--text-reading);
+  line-height: var(--leading-reading);
+}
+
+.detail .body > *:first-child {
+  margin-top: 0;
 }
 
 .detail .body img {
   max-width: 100%;
   height: auto;
+  border-radius: var(--radius-sm);
 }
 
 .detail .body table {
   border-collapse: collapse;
   width: 100%;
+  font-size: var(--text-sm);
 }
 
 .detail .body td,
 .detail .body th {
   border: 1px solid var(--border);
-  padding: 6px 8px;
+  padding: var(--space-2) var(--space-3);
+}
+
+.detail .body th {
+  background: var(--surface-2);
+  text-align: left;
 }
 
 .detail .body a {
   color: var(--accent);
+  text-underline-offset: 3px;
+}
+
+.detail .body blockquote {
+  margin: var(--space-4) 0;
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border-strong);
+  color: var(--muted);
 }
 
 .detail .body pre,
 .detail .body code {
-  background: var(--surface-2);
-  border-radius: 6px;
-  padding: 2px 5px;
-  font-size: 13px;
+  font-family: var(--font-mono);
+  font-size: var(--text-sm);
+}
+
+.detail .body pre {
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  padding: var(--space-3) var(--space-4);
   overflow-x: auto;
+}
+
+.detail .body code {
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  padding: 2px 6px;
+}
+
+.detail .body pre code {
+  background: none;
+  padding: 0;
 }
 
 .label-chips {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
-  padding: 0 16px 12px;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-4);
 }
 
 .chip {
-  font-size: 11px;
+  font-size: var(--text-xs);
   color: var(--muted);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 9px;
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  padding: 4px var(--space-2);
 }
 
 .banner {
-  margin: 0 0 12px;
-  padding: 10px 12px;
-  border-radius: 10px;
+  margin: 0 0 var(--space-4);
+  padding: var(--space-3) var(--space-4);
+  border-radius: var(--radius-md);
   background: var(--surface-2);
-  border: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--text-sm);
   color: var(--muted);
+  line-height: var(--leading-base);
 }
 
 .banner.bad {
-  border-color: var(--danger);
   color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 10%, var(--surface));
 }
 
 .crumbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
-  font-size: 12px;
+  align-items: center;
+  gap: var(--space-1);
+  font-size: var(--text-sm);
   color: var(--muted);
-  margin-bottom: 10px;
+  margin-bottom: var(--space-3);
 }
 
 .crumbs span {
   cursor: pointer;
-  min-height: 24px;
+  min-height: 28px;
   display: inline-flex;
   align-items: center;
+  padding: 0 2px;
 }
 
-.crumbs span:hover {
+.crumbs span:active {
   color: var(--accent);
+}
+
+.crumbs .sep {
+  color: var(--faint);
 }
 
 /* ------------------------------------------------------------------- setup */
 
 .setup {
-  padding: calc(var(--safe-top) + 32px) 20px calc(var(--safe-bottom) + 20px);
+  padding: calc(var(--safe-top) + var(--space-8)) var(--space-5) calc(var(--safe-bottom) + var(--space-5));
   max-width: 520px;
   margin: 0 auto;
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: var(--space-4);
 }
 
 .setup h2 {
   margin: 0;
-  font-size: 22px;
-  letter-spacing: -0.02em;
+  font-size: var(--text-lg);
+  font-weight: 680;
+  letter-spacing: -0.025em;
 }
 
 .setup p {
   margin: 0;
   color: var(--muted);
-  font-size: 13px;
-  line-height: 1.7;
+  font-size: var(--text-sm);
+  line-height: var(--leading-reading);
 }
 
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--space-2);
 }
 
 .field label {
-  font-size: 12px;
+  font-size: var(--text-xs);
+  font-weight: 600;
   color: var(--muted);
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
 }
 
 p.note {
   border-left: 3px solid var(--warn);
-  padding-left: 10px;
+  padding-left: var(--space-3);
   color: var(--muted);
 }
 
 p.note code {
+  font-family: var(--font-mono);
   background: var(--surface-2);
-  border-radius: 4px;
-  padding: 1px 4px;
-  font-size: 12px;
+  border-radius: var(--radius-sm);
+  padding: 1px 5px;
+  font-size: var(--text-xs);
 }
 
-/* ------------------------------------------------------------------ toast */
+/* ------------------------------------------------------------------- toast */
 
 .toast {
   position: fixed;
   left: 50%;
-  bottom: calc(var(--safe-bottom) + 78px);
+  bottom: calc(var(--safe-bottom) + 82px);
   transform: translateX(-50%);
   background: var(--surface-2);
-  border: 1px solid var(--border);
   color: var(--text);
-  padding: 10px 16px;
-  border-radius: 999px;
-  font-size: 13px;
+  padding: var(--space-3) var(--space-5);
+  border-radius: var(--radius-pill);
+  font-size: var(--text-sm);
   z-index: 60;
   max-width: 90vw;
   text-align: center;
-  box-shadow: 0 8px 24px rgb(0 0 0 / 35%);
+  box-shadow: var(--elev-3);
+  animation: toast-in var(--dur-3) var(--ease-out);
 }
 
 .toast.bad {
-  border-color: var(--danger);
   color: var(--danger);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 8px) scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0) scale(1);
+  }
 }
 
 /* ------------------------------------------------------------ detail modes */
 
 .detail-toolbar {
   display: flex;
-  gap: 8px;
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3);
   background: var(--surface);
+  box-shadow: var(--elev-1);
+  position: relative;
+  z-index: 1;
+}
+
+.detail-toolbar button {
+  padding: var(--space-2) var(--space-4);
+  min-height: 38px;
+  font-size: var(--text-sm);
+  background: transparent;
+  color: var(--muted);
 }
 
 .detail-toolbar button.active {
   color: var(--accent);
-  border-color: var(--accent);
+  background: var(--surface-2);
 }
 
 /* Positioned so the ink layer can be laid over the content it annotates. */
@@ -504,18 +760,25 @@ p.note code {
 .ink-toolbar {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 8px 12px calc(var(--safe-bottom) + 8px);
-  border-top: 1px solid var(--border);
+  gap: var(--space-2);
+  padding: var(--space-2) var(--space-3) calc(var(--safe-bottom) + var(--space-3));
   background: var(--surface);
+  box-shadow: var(--elev-2);
   overflow-x: auto;
 }
 
 .ink-toolbar .ink-hint {
   flex: 1;
-  font-size: 12px;
-  color: var(--muted);
+  font-size: var(--text-xs);
+  color: var(--faint);
   white-space: nowrap;
+}
+
+.ink-toolbar button {
+  flex: 0 0 auto;
+  padding: var(--space-2) var(--space-3);
+  min-height: 38px;
+  font-size: var(--text-sm);
 }
 
 .ink-toolbar .swatch {
@@ -524,40 +787,42 @@ p.note code {
   height: 34px;
   min-height: 34px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-pill);
   background: var(--swatch);
-  border: 2px solid var(--border);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 22%);
+  transition: transform var(--dur-1) var(--ease-out);
 }
 
-.ink-toolbar button {
-  flex: 0 0 auto;
+.ink-toolbar .swatch:active {
+  transform: scale(0.9);
 }
 
 /* --------------------------------------------------- on-demand attachment cache */
 
 .banner button {
-  margin-left: 10px;
-  padding: 6px 12px;
-  min-height: 34px;
-  font-size: 13px;
+  margin-left: var(--space-3);
+  padding: var(--space-1) var(--space-3);
+  min-height: 32px;
+  font-size: var(--text-sm);
+  background: var(--surface);
 }
 
 .attachments {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 0 16px 12px;
+  gap: var(--space-2);
+  padding: 0 var(--space-4) var(--space-4);
 }
 
 .attachment {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid var(--border);
-  border-radius: 10px;
+  gap: var(--space-3);
+  padding: var(--space-2) var(--space-3);
+  border-radius: var(--radius-md);
   background: var(--surface);
-  font-size: 13px;
+  font-size: var(--text-sm);
+  box-shadow: var(--elev-1);
 }
 
 .attachment .attachment-title {
@@ -569,28 +834,96 @@ p.note code {
 }
 
 .attachment .attachment-meta {
-  color: var(--muted);
-  font-size: 12px;
+  color: var(--faint);
+  font-size: var(--text-xs);
   white-space: nowrap;
 }
 
 .attachment button {
-  padding: 5px 12px;
+  padding: var(--space-1) var(--space-3);
   min-height: 32px;
-  font-size: 13px;
+  font-size: var(--text-sm);
 }
 
 .cache-note {
-  padding: 0 16px 14px;
-  font-size: 12px;
-  color: var(--muted);
+  padding: 0 var(--space-4) var(--space-4);
+  font-size: var(--text-xs);
+  color: var(--faint);
+}
+
+/* --------------------------------------------------------------- skeletons */
+
+/* Replaces a bare "正在打开数据库…" line: the shape of the screen arrives before the data does. */
+.skeleton {
+  border-radius: var(--radius-md);
+  background: linear-gradient(
+    90deg,
+    var(--surface) 0%,
+    var(--surface-2) 50%,
+    var(--surface) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.4s var(--ease-in-out) infinite;
+}
+
+.skeleton-line {
+  height: 14px;
+  margin-bottom: var(--space-3);
+}
+
+.skeleton-line.short {
+  width: 55%;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 200% 0;
+  }
+  to {
+    background-position: -200% 0;
+  }
+}
+
+/* ------------------------------------------------------------ transitions */
+
+/*
+ * Continuity on insertion, without `document.startViewTransition`.
+ *
+ * A view transition snapshots the page, and while one is in flight the page is not hit-testable —
+ * measured here: `elementFromPoint` over the ink canvas returned `<html>` until the transition
+ * cleared. That is a quarter-second of dropped input on every navigation. Animating the incoming
+ * nodes directly gives the same sense of movement and leaves the hit-test tree intact.
+ *
+ * Both are short and move only opacity and a few pixels; a longer or larger move reads as slow
+ * rather than as smooth.
+ */
+
+.view {
+  animation: view-in var(--dur-2) var(--ease-out);
+}
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+  }
+}
+
+.detail {
+  animation: panel-in var(--dur-3) var(--ease-out);
+}
+
+@keyframes panel-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
 }
 
 /* ------------------------------------------------------- wider viewports */
 
 @media (min-width: 720px) {
   .view {
-    padding: 20px max(20px, calc((100% - 860px) / 2));
+    padding: var(--space-5) max(var(--space-5), calc((100% - 860px) / 2));
   }
 
   .quick-note textarea {
@@ -598,7 +931,11 @@ p.note code {
   }
 
   .row {
-    padding: 14px 16px;
+    padding: var(--space-4);
+  }
+
+  .row:hover {
+    background: var(--surface-2);
   }
 
   /* Two panes on a tablet: the list stays put and the note opens beside it, instead of the note
@@ -610,12 +947,10 @@ p.note code {
     right: 0;
     top: var(--appbar-h, 64px);
     width: min(720px, 62vw);
-    border-left: 1px solid var(--border);
-    box-shadow: -18px 0 40px rgb(0 0 0 / 28%);
+    box-shadow: var(--elev-3);
   }
 
   .detail .body {
-    padding: 22px 26px;
-    font-size: 16.5px;
+    padding: var(--space-6) var(--space-6) var(--space-8);
   }
 }

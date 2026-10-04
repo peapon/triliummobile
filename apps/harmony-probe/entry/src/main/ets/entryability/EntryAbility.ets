@@ -2,6 +2,8 @@ import { AbilityConstant, UIAbility, Want } from "@kit.AbilityKit";
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { window } from "@kit.ArkUI";
 
+import { ShellState } from "../services/ShellState";
+
 const DOMAIN = 0x0000;
 const TAG = "TriliumProbe";
 
@@ -34,5 +36,24 @@ export default class EntryAbility extends UIAbility {
 
   onBackground(): void {
     hilog.info(DOMAIN, TAG, "onBackground");
+  }
+
+  /**
+   * Route the back gesture into the page's history.
+   *
+   * The app is a single page, so the WebView's own history is the back stack: opening a note or the
+   * settings screen pushes a step, and going backward fires `popstate` there. Consuming the press
+   * only while there is history to walk means the gesture still exits the app from the top level,
+   * which is what a user expects.
+   */
+  onBackPressed(): boolean {
+    const controller = ShellState.controller;
+
+    if (controller && controller.accessBackward()) {
+      controller.backward();
+      return true;
+    }
+
+    return false;
   }
 }

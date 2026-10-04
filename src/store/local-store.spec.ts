@@ -297,6 +297,69 @@ describe("conflict resolution", () => {
   });
 });
 
+describe("switching vaults", () => {
+  /**
+   * A replica belongs to one vault. Pointing the client at another without wiping leaves the first
+   * vault's rows in place while the cursors still index the first server's journal, and the next sync
+   * pushes them to the second server. That interleaving cannot be undone from the client.
+   */
+  function seedFromVaultOne(): void {
+    store.setOption("syncServerHost", "http://vault-one");
+    store.setOption("documentSecret", "secret-one");
+    store.setOption("syncMaxBlobContentSize", "4194304");
+    store.setOption("triliumMobile.blobCacheBudget", "1024");
+    store.setOption("triliumMobile.inboxNoteId", "inboxFromVaultOne");
+    store.documentId = "vault-one-id";
+    store.lastSyncedPull = 4211;
+    store.lastSyncedPush = 4211;
+
+    const row = seedNote();
+    store.applyEntityChanges([{ entityChange: change({ hash: "H" }), entity: row }], PEER);
+    store.cacheBlob("blobAAAAAAAAA", "downloaded content");
+  }
+
+  it("clears everything that came from the previous vault", () => {
+    seedFromVaultOne();
+    expect(store.count("notes")).toBe(1);
+
+    store.wipeReplica();
+
+    for (const table of ["notes", "branches", "attributes", "revisions", "attachments", "blobs", "entity_changes"]) {
+      expect(store.count(table)).toBe(0);
+    }
+
+    expect(store.cacheStats().entries).toBe(0);
+    expect(store.lastSyncedPull).toBe(0);
+    expect(store.lastSyncedPush).toBe(0);
+    expect(store.documentId).toBeNull();
+    // The inbox id pointed at a note in the vault that just went away.
+    expect(store.getOption("triliumMobile.inboxNoteId")).toBeNull();
+  });
+
+  it("keeps the connection settings, which are how the client is told where to go next", () => {
+    seedFromVaultOne();
+    store.wipeReplica();
+
+    expect(store.getOption("syncServerHost")).toBe("http://vault-one");
+    expect(store.getOption("documentSecret")).toBe("secret-one");
+    expect(store.getOption("syncMaxBlobContentSize")).toBe("4194304");
+    expect(store.getOption("triliumMobile.blobCacheBudget")).toBe("1024");
+  });
+
+  it("leaves a wiped replica indistinguishable from a fresh one", () => {
+    seedFromVaultOne();
+    store.wipeReplica();
+
+    expect(store.collectChangesToPush()).toHaveLength(0);
+    expect(store.maxJournalId()).toBe(0);
+
+    // A note created after the wipe belongs to the new vault and pushes normally.
+    store.createTextNote({ parentNoteId: "root", title: "After the switch", content: "<p>new</p>" });
+    const pending = store.collectChangesToPush().filter((ec) => !store.isOwnEcho(ec, PEER));
+    expect(pending).toHaveLength(3);
+  });
+});
+
 describe("push selection", () => {
   it("excludes rows stamped with the peer's instance id", () => {
     const row = seedNote();

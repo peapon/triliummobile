@@ -320,6 +320,32 @@ async function main(): Promise<void> {
       await page.waitForSelector("#ink-layer.active", { timeout: 15_000 });
 
       const box = await page.locator("#ink-layer").boundingBox();
+
+      // Diagnostics: if drawing does not register, the reason is almost always that something else
+      // is on top of the canvas or the canvas has no area.
+      // The canvas must be hit-testable *now*, not merely present. A view transition snapshots the
+      // page and silently drops input while it runs — this assertion is what caught that, and it
+      // will catch it again if transitions are ever reintroduced.
+      const hitTest = await page.evaluate(() => {
+        const canvas = document.getElementById("ink-layer") as HTMLCanvasElement | null;
+        if (!canvas) return { present: false, hit: false };
+
+        const rect = canvas.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.left + 40, rect.top + 40);
+        return {
+          present: true,
+          hit: top === canvas,
+          topElement: top ? `${top.tagName}.${top.className}` : "none",
+          rect: `${Math.round(rect.width)}x${Math.round(rect.height)}`
+        };
+      });
+
+      check(
+        "the ink canvas is hit-testable straight away",
+        hitTest.hit,
+        `${hitTest.rect ?? "?"} topmost=${hitTest.topElement ?? "?"}`
+      );
+
       if (!box) {
         check("the ink canvas has a drawable box", false);
       } else {

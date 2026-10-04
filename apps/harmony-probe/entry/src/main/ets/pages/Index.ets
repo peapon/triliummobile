@@ -19,6 +19,7 @@ import { hilog } from "@kit.PerformanceAnalysisKit";
 import { webview } from "@kit.ArkWeb";
 
 import { ApiProxy } from "../services/ApiProxy";
+import { ShellState } from "../services/ShellState";
 
 const DOMAIN = 0x0000;
 const TAG = "TriliumShell";
@@ -88,6 +89,8 @@ struct Index {
           controller: this.controller
         })
         .onControllerAttached(() => {
+          ShellState.controller = this.controller;
+
           try {
             webview.WebviewController.enablePrivateNetworkAccess(false);
             this.status = "就绪";

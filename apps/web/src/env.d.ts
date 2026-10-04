@@ -25,6 +25,9 @@ interface ImportMetaEnv {
   readonly VITE_E2E_CAPTURE?: string;
   /** When set, the test build edits a note matching this text and syncs it. */
   readonly VITE_E2E_EDIT?: string;
+  /** A second vault, to exercise the switch-and-wipe path. */
+  readonly VITE_E2E_SERVER_B?: string;
+  readonly VITE_E2E_PASSWORD_B?: string;
 }
 
 interface ImportMeta {

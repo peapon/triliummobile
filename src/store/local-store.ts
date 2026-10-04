@@ -37,6 +37,8 @@ export const OPTION_DOCUMENT_ID = "documentId";
 export const OPTION_DOCUMENT_SECRET = "documentSecret";
 export const OPTION_SYNC_SERVER_HOST = "syncServerHost";
 export const OPTION_SYNC_MAX_BLOB_CONTENT_SIZE = "syncMaxBlobContentSize";
+/** Ceiling for downloaded attachments. Local-only, so it survives a vault switch. */
+export const OPTION_BLOB_CACHE_BUDGET = "triliumMobile.blobCacheBudget";
 
 /**
  * Options that participate in sync. Upstream keeps a whitelist; everything else is local-only and
@@ -777,6 +779,64 @@ export class LocalStore {
   maxJournalId(): number {
     const row = this.db.get<{ m: number | null }>("SELECT MAX(id) AS m FROM entity_changes");
     return row?.m ?? 0;
+  }
+
+  /**
+   * Discard the local replica, keeping only this device's connection settings.
+   *
+   * A replica belongs to exactly one vault, identified by its `documentId`. Pointing the client at a
+   * different server without wiping first leaves the previous vault's rows in place while the cursors
+   * still index the *old* server's journal — and the next sync then pushes those rows to the new
+   * server and pulls its rows on top. The two vaults interleave, and the damage is not reversible
+   * from this side.
+   *
+   * Everything derived from the vault goes: the entity tables, the journal, the blob cache, and every
+   * option that arrived over sync. The transport settings survive, because they are how the client is
+   * told where to go next.
+   */
+  wipeReplica(): void {
+    const preserved = new Set([
+      OPTION_SYNC_SERVER_HOST,
+      OPTION_DOCUMENT_SECRET,
+      OPTION_SYNC_MAX_BLOB_CONTENT_SIZE,
+      OPTION_BLOB_CACHE_BUDGET
+    ]);
+
+    this.db.transaction(() => {
+      for (const table of [
+        "notes",
+        "branches",
+        "attributes",
+        "revisions",
+        "attachments",
+        "blobs",
+        "etapi_tokens",
+        "entity_changes",
+        "blob_cache"
+      ]) {
+        this.db.run(`DELETE FROM "${table}"`);
+      }
+
+      // Options are a mix of vault data and this device's own settings, so they are filtered rather
+      // than truncated. The inbox id lives here too, and it pointed at a note in the other vault.
+      const names = this.db.all<{ name: string }>("SELECT name FROM options");
+      for (const { name } of names) {
+        if (!preserved.has(name)) this.db.run("DELETE FROM options WHERE name = ?", [name]);
+      }
+
+      this.setNumericOption(OPTION_LAST_SYNCED_PULL, 0);
+      this.setNumericOption(OPTION_LAST_SYNCED_PUSH, 0);
+    });
+  }
+
+  /** The vault this replica belongs to, or null when it has never synced. */
+  get documentId(): string | null {
+    return this.getOption(OPTION_DOCUMENT_ID);
+  }
+
+  set documentId(value: string | null) {
+    if (value === null) this.db.run("DELETE FROM options WHERE name = ?", [OPTION_DOCUMENT_ID]);
+    else this.setOption(OPTION_DOCUMENT_ID, value);
   }
 
   close(): void {
