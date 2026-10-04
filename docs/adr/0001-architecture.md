@@ -162,8 +162,30 @@ Therefore:
 - **(b) ink annotation and (c) freeform drawing**: **one platform-agnostic canvas ink layer in the web
   core**, with our own stroke model. Never adopt PencilKit / Pen Kit / `androidx.ink` as *storage* —
   Pen Kit's `save()` format is opaque, undocumented, and does not export strokes.
-- Ink persists as a note **attachment** (`ink-<id>.json`) with points normalised to [0,1]; never
-  inline base64 into note HTML.
+- Ink persists as a note **attachment** (`ink-main.json`, role `ink`) with points normalised to
+  [0,1]; never inline base64 into note HTML. The note carries a
+  `<div class="trilium-ink" data-ink-id="main">` placeholder so the reference travels with the note
+  rather than being inferred from whichever attachments happen to exist.
+
+**Built.** `apps/web/src/ink.ts` holds the model and the canvas; `InkCanvas` is the capture/rendering
+path and `paintInk()` is the read-only path, so a phone renders ink a tablet drew without attaching
+input handlers. Details that matter:
+
+- Strokes carry a normalised width and the document records the **aspect ratio of the box it was
+  drawn in**, so a sketch redraws correctly on a differently shaped screen instead of stretching.
+- Pressure modulates per-segment width where the device reports it. Each segment is drawn separately
+  because a Canvas2D path has one line width for its whole length.
+- Coalesced pointer events are used when available; without them a fast stroke degrades into a
+  polygon.
+- **Palm rejection is a heuristic, not a feature.** No target exposes an app-level API — HarmonyOS's
+  `setHandwritingFlag()` is a System API — so once a stylus has been seen, `touch` input is ignored
+  for a short window. It is imperfect, and stated as such in the code.
+- A damaged stroke file yields a note with no ink, never a screen that fails to open; the parser is
+  covered by 16 unit tests.
+
+Editing is deliberately narrow: a `contenteditable` over **sanitised** HTML, offered only for note
+types this editor can round-trip (`text`, `code`). A `book`, `canvas` or `render` note has structure
+a plain editor would destroy, so those stay read-only.
 
 ### D8 — License: AGPL-3.0-only.
 
@@ -286,7 +308,19 @@ file to confirm arrival:
 [  ok  ] opening a note renders its content
 [  ok  ] rendered content carries no script or event handlers
 [  ok  ] no uncaught console errors
+[  ok  ] tablet shows the editing toolbar
+[  ok  ] an edit is visible locally before any sync
+[  ok  ] the edit is still owed to the server
+[  ok  ] drawing a stroke enables the ink save button
+[  ok  ] the tablet edit reached the server on the next sync
+[  ok  ] the ink layer reached the server as an attachment — ink-main.json
+[  ok  ] ink is still present after a reload, loaded from the local replica
+[  ok  ] the edit persisted across a reload
 ```
+
+The tablet checks assert the offline-first contract directly: the edit and the ink are visible
+**before** any sync, reported as owed to the server, and only then carried across by the next sync —
+verified by reading the server's file, not by trusting a `204`.
 
 Three defects were found only by running the UI, none of which any Node test could have caught:
 an unbound `fetch` reference throwing `Illegal invocation` in a worker; `Buffer` being unavailable
