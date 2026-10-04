@@ -11,7 +11,7 @@ This README is the operator's view: what exists, how to run it, and what has act
 |---|---|
 | Crypto primitives (SHA-1/256/512, HMAC-SHA-256, base64) | **Done and verified** — byte-identical to `node:crypto` |
 | Entity hashes | **Done and verified** — 100% on a fresh server DB; 100% of notes/branches/attributes in a live 2.6 GB vault |
-| Sync transport (login, pull, paged push, check) | **Done and verified** — 252/252 content-hash sectors match a real server |
+| Sync transport (login, pull, paged push, check) | **Done and verified** — **404/404 sectors match the owner's live vault** |
 | Local replica (schema, journal, conflict bounce-back, tombstones) | **Done and verified** — full round-trip against a real server |
 | Offline capture (`createTextNote`) | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
 | Content-hash verification loop | **Done** — folds the journal sector by sector, with re-queue retry |

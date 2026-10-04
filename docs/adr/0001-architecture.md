@@ -273,7 +273,31 @@ In the live vault, notes / branches / attributes are **100%**. The residual 282 
 through a path outside the core protocol — plus 13 local `NA` option/token rows. None are core-path
 discrepancies, and none matter at runtime because of D3.
 
-**Sync protocol** — against a real Trilium 0.106.0 server, the full handshake and pull were run and
+**Sync protocol against the owner's production vault** — the objective names a specific self-hosted
+server, so the read-only probe (`tools/probe.ts`, which never calls `transport.update()`) was run
+against it:
+
+```
+Server   http://114.66.28.183:29050
+Version  0.106.0   db=240   sync=39
+Login OK serverInstanceId=E78AkKwZd5zq  maxEntityChangeId=58,413
+
+Pulled   25,037 records in 70 pages (171.43s), 25,037 distinct entities
+   blobs 6,942 · branches 4,692 · notes 4,365 · revisions 3,277
+   attributes 2,884 · attachments 2,705 · options 90 · note_reordering 67 · etapi_tokens 15
+   (73 blobs stubbed by maxBlobContentSize — fetched on demand)
+
+Content hash   local sectors=404  server sectors=404
+  PASS — every sector matches the server.
+```
+
+That is the whole journal of a live vault, folded independently and compared with the server's own
+check: **404 of 404 sectors agree.** It also sizes the first-run experience — 171 seconds for 25,037
+records over a WAN, which is the number a client's initial-sync UI has to be designed around, and it
+confirms the blob policy (D4) empirically: only 73 blobs exceeded the cap, so the other ~6,900 came
+down as content.
+
+**Sync protocol, against a local Trilium 0.106.0 server** — the full handshake and pull were run and
 the received records were independently folded into per-sector content hashes and compared with the
 server's own `GET /api/sync/check`:
 
