@@ -115,18 +115,28 @@ content-hash checks still pass. Missing content is then fetched on demand via
 mobile, where the desktop default of `syncMaxBlobContentSize: 0` (unlimited) "blows the
 WASM/native heap during sync".
 
-### D5 — Storage behind an interface; IndexedDB first, native SQLite later.
+### D5 — SQLite (WASM + OPFS) behind an interface, running **inside a Web Worker**.
 
-The sync engine requires the `entity_changes` journal and row-level entity tables (D6). It does not
-require SQLite specifically.
+**Revised during implementation**, on evidence. The original plan was IndexedDB, on the reasoning
+that it needs no WASM and therefore survives HarmonyOS's Secure Shield mode. Two findings changed it:
 
-- **v1: IndexedDB.** Available in every WebView including ArkWeb, needs no WASM (and so survives
-  Secure Shield mode), and is verifiable in a browser on this machine today.
-- **Later, if measurement demands it: a native SQLite adapter** (ArkTS `relationalStore`, Android
-  SQLite, iOS SQLite) behind the same interface.
+1. **The store must be synchronous.** The journal application is a tight read-then-write loop, and
+   the content-hash fold hashes every row in one pass. IndexedDB's transaction model cannot compose
+   with an imperative async loop (`await` inside a transaction closes it), so an IndexedDB store
+   would have forced either a rewrite of the protocol logic or thousands of promise hops.
+2. **`sqlite-wasm` + OPFS SAH-Pool is synchronous** — and it is the same engine upstream's own
+   standalone and Capacitor builds run on. Verified working here before committing to it.
 
-`sqlite-wasm` + OPFS is deliberately *not* the v1 default: it depends on two unverified ArkWeb
-behaviours and is disabled wholesale by Secure Shield mode.
+The cost is a hard constraint that was **verified, not assumed**: the SAH-Pool VFS needs
+`FileSystemFileHandle.createSyncAccessHandle()`, which browsers expose **only to workers**. On the
+main thread the library fails with "Missing required OPFS APIs". So the database, the transport and
+the engine all live in a `Worker`, and the UI reaches them over an RPC boundary. That matches
+upstream exactly — its standalone build runs the whole core in a dedicated worker — and it has the
+side benefit that no synchronous SQLite call can block a frame.
+
+The Secure Shield caveat stands and is the reason this sits behind `SqlDatabase`: a native SQLite
+bridge (ArkTS `relationalStore`, Android SQLite, iOS SQLite) can replace the adapter per platform
+without touching anything above it.
 
 ### D6 — Replicate the server's schema; do not build a document model.
 
@@ -163,6 +173,43 @@ corresponding-source obligation. A clean-room implementation would be the only w
 it is not worth it here.
 
 ---
+
+### D9 — The web core cannot call a Trilium server cross-origin. Requests must be same-origin or natively proxied.
+
+**Verified by inspecting the server's headers**, not inferred:
+
+```
+$ curl -D - http://server/api/setup/status -H "Origin: http://app.example"
+HTTP/1.1 200 OK
+Cross-Origin-Opener-Policy: same-origin
+Cross-Origin-Resource-Policy: same-origin
+                         <- no Access-Control-Allow-Origin
+```
+
+`Cross-Origin-Resource-Policy: same-origin` blocks cross-origin reads outright — a plain
+`mode: "no-cors"` request does not help, and the failure in a browser is an opaque
+`net::ERR_FAILED`, which is exactly what the first browser run produced.
+
+Consequences, in order of preference:
+
+1. **Native shells proxy the API.** The shell intercepts the WebView's `/api/*` requests and performs
+   them natively. This is upstream's own iOS approach (`WKURLSchemeHandler`); HarmonyOS's ArkWeb
+   offers `javaScriptProxy` and the option of an in-app local HTTP server. The WebView then only ever
+   talks to its own origin and never meets the header.
+2. **Serve the app from the server's own origin** — same host, behind the same reverse proxy. Works
+   in any plain browser with no native code.
+3. **Development only:** a dev-server proxy (implemented in `apps/web/vite.config.ts`).
+
+What does **not** work is pointing a browser-hosted app at an arbitrary remote Trilium URL, which the
+setup screen now says explicitly instead of failing obscurely.
+
+### D10 — The protocol core must stay platform-neutral.
+
+A rule learned the hard way: the first browser run died on **`Buffer is not defined`**, because the
+journal decode and the push encoder used Node's `Buffer` for base64. Every Node integration test
+passed — Node has `Buffer`. The core therefore uses only the portable helpers in `src/crypto/bytes.ts`
+plus `globalThis.crypto`, and `apps/web` runs it unchanged. Anything Node-only in `src/` is a bug,
+not a convenience.
 
 ## 3. Verification performed
 
@@ -221,6 +268,29 @@ Built entry-default-unsigned.hap (88,875 bytes)
 ```
 
 Reproduce with `apps/harmony-probe/setup-toolchain.sh && apps/harmony-probe/build.sh`.
+
+**The application, end to end, in a real browser** — `tools/e2e-web.ts` drives the actual UI in
+headless Chrome (390×844, touch, `zh-CN`) against the real server and reads the server's own SQLite
+file to confirm arrival:
+
+```
+[  ok  ] app boots and OPFS + sqlite-wasm initialise
+[  ok  ] setup flow reads the sync seed and completes a first sync
+[  ok  ] the first sync actually populated the local replica — 591 notes
+[  ok  ] local search returns results offline — 17 rows
+[  ok  ] capture writes locally and marks the note as pending — 3 项待同步
+[  ok  ] sync reports success — 同步完成：拉取 0 项，用时 0.1s
+[  ok  ] the captured note is in the server's own database
+[  ok  ] server note count increased — 591 -> 592
+[  ok  ] browse lists the tree from root — 14 children
+[  ok  ] opening a note renders its content
+[  ok  ] rendered content carries no script or event handlers
+[  ok  ] no uncaught console errors
+```
+
+Three defects were found only by running the UI, none of which any Node test could have caught:
+an unbound `fetch` reference throwing `Illegal invocation` in a worker; `Buffer` being unavailable
+there (D10); and the cross-origin block (D9).
 
 **Confirmation of the ArkWeb API surface** — read from the SDK's own declarations rather than from
 documentation:
@@ -298,5 +368,8 @@ The probe that answers all three of the following is written and **builds succes
 - `docs/research/02-harmonyos-toolchain.md` — toolchain, ArkWeb capability matrix, distribution
 - `docs/research/03-prior-art.md` — the three existing clients, dissected
 - `docs/research/04-stylus-handwriting.md` — stylus support per platform
-- `src/crypto/`, `src/entities/`, `src/sync/` — the verified implementation
-- `tools/verify-hashes.ts`, `tools/probe.ts` — the verification harnesses
+- `src/crypto/`, `src/entities/`, `src/store/`, `src/sync/` — the verified implementation
+- `apps/web/` — the phone-first UI, running the same core in a worker
+- `tools/roundtrip.ts` — offline write → push → read the server's own database
+- `tools/e2e-web.ts` — the same, driven through the real UI in a real browser
+- `tools/verify-hashes.ts`, `tools/probe.ts`, `tools/diagnose-hash.ts` — verification harnesses

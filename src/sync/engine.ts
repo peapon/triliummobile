@@ -13,6 +13,7 @@
  * protocol actually has: every HTTP call succeeds, and the two sides still disagree.
  */
 
+import { base64Encode, utf8Encode } from "../crypto/index.js";
 import { computeEntityHashes, diffEntityHashes, toHashable, type FailedCheck } from "./content-hash.js";
 import { SyncTransport } from "./transport.js";
 import type { EntityChange, EntityChangeRecord } from "./types.js";
@@ -265,13 +266,17 @@ const ENTITY_PK: Record<string, string> = {
   etapi_tokens: "etapiTokenId"
 };
 
-/** `encodeBase64` for push: text content becomes UTF-8 bytes first, then base64. */
+/**
+ * `encodeBase64` for push: text content becomes UTF-8 bytes first, then base64.
+ *
+ * Uses the portable encoder rather than `Buffer`, because this runs inside a WebView worker.
+ */
 function encodeBlobContent(content: unknown): string {
   if (typeof content === "string") {
-    return Buffer.from(content, "utf8").toString("base64");
+    return base64Encode(utf8Encode(content));
   }
   if (content instanceof Uint8Array) {
-    return Buffer.from(content).toString("base64");
+    return base64Encode(content);
   }
   return "";
 }

@@ -13,7 +13,7 @@
  */
 
 import { calculateBlobHash, generateEntityHash } from "../entities/hashes.js";
-import { hashedBlobId } from "../crypto/index.js";
+import { base64Decode, hashedBlobId } from "../crypto/index.js";
 import { randomString } from "../util/random.js";
 import type { SqlDatabase, SqlValue } from "./database.js";
 import { BOOLEAN_INT_COLUMNS, ENTITY_PRIMARY_KEYS, ERASABLE_ENTITIES, SCHEMA_SQL } from "./schema.js";
@@ -69,6 +69,11 @@ export class LocalStore {
 
   get localInstanceId(): string {
     return this.instanceId;
+  }
+
+  /** The underlying handle, for read-only query helpers that live outside the protocol layer. */
+  get database(): SqlDatabase {
+    return this.db;
   }
 
   initializeSchema(): void {
@@ -514,5 +519,7 @@ export function preProcessContent(
 
 export function base64ToBytes(base64: string): Uint8Array {
   if (base64 === "") return new Uint8Array(0);
-  return Uint8Array.from(Buffer.from(base64, "base64"));
+  // Portable decode rather than `Buffer`: this module runs inside a WebView worker, where `Buffer`
+  // does not exist.
+  return base64Decode(base64);
 }

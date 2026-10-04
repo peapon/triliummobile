@@ -1,0 +1,12 @@
+{
+  "name": "@triliummobile/web",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Phone-first Trilium client UI, running the local replica in the browser",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 5273 --strictPort"
+  }
+}

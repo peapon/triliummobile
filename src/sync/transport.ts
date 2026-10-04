@@ -83,7 +83,10 @@ export class SyncTransport {
     this.documentSecret = options.documentSecret;
     this.syncVersion = options.syncVersion;
     this.maxBlobContentSize = options.maxBlobContentSize ?? DEFAULT_MAX_BLOB_CONTENT_SIZE;
-    this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
+    // Bound, not taken as a bare reference: inside a Worker (which the OPFS-backed store
+    // requires) an unbound `fetch` throws "Illegal invocation" because it is called with the
+    // wrong receiver.
+    this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
   }
 
   /** The server's instance id, learned at login. */
