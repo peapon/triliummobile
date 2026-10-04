@@ -1,0 +1,8 @@
+{
+  "string": [
+    { "name": "module_desc", "value": "ArkWeb capability probe" },
+    { "name": "EntryAbility_desc", "value": "ArkWeb capability probe" },
+    { "name": "EntryAbility_label", "value": "Trilium Probe" },
+    { "name": "internet_reason", "value": "Reach the self-hosted Trilium server on the local network" }
+  ]
+}

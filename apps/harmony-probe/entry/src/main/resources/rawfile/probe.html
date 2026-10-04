@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ArkWeb capability probe</title>
+<style>
+  :root { color-scheme: light dark; }
+  body {
+    font: 13px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
+    margin: 0; padding: 12px; background: #0f1115; color: #e6e6e6;
+    -webkit-text-size-adjust: 100%;
+  }
+  h1 { font-size: 15px; margin: 0 0 4px; }
+  .sub { color: #8b93a1; margin-bottom: 12px; }
+  section { border: 1px solid #262b36; border-radius: 8px; padding: 10px; margin-bottom: 10px; }
+  h2 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: #8b93a1; margin: 0 0 8px; }
+  .row { display: flex; gap: 8px; align-items: baseline; padding: 2px 0; }
+  .k { flex: 0 0 44%; color: #9aa4b2; }
+  .v { flex: 1; word-break: break-word; }
+  .ok   { color: #3ddc84; }
+  .bad  { color: #ff6b6b; }
+  .warn { color: #ffc857; }
+  .big  { font-size: 15px; font-weight: 700; }
+  #pad {
+    height: 150px; border: 1px dashed #4a5568; border-radius: 6px;
+    display: flex; align-items: center; justify-content: center;
+    color: #6b7280; touch-action: none; user-select: none; margin-bottom: 8px;
+    background: repeating-linear-gradient(45deg, #14181f, #14181f 8px, #171b23 8px, #171b23 16px);
+  }
+  input[type=url] { width: 100%; box-sizing: border-box; padding: 7px; border-radius: 6px;
+    border: 1px solid #333a47; background: #0b0e13; color: #e6e6e6; font: inherit; }
+  button { padding: 7px 12px; border-radius: 6px; border: 1px solid #333a47;
+    background: #1b2029; color: #e6e6e6; font: inherit; margin-top: 8px; }
+  pre { white-space: pre-wrap; word-break: break-all; margin: 0; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<h1>ArkWeb capability probe</h1>
+<div class="sub">Trilium mobile client — feasibility gate. Nothing here is uploaded anywhere.</div>
+
+<section>
+  <h2>1. Engine identity</h2>
+  <div id="engine"></div>
+</section>
+
+<section>
+  <h2>2. Stylus — the decision-critical one</h2>
+  <div id="stylus"></div>
+  <div id="pad">Draw here with the stylus (and once with a finger)</div>
+  <pre id="styluslog"></pre>
+</section>
+
+<section>
+  <h2>3. Storage: IndexedDB quota</h2>
+  <div id="storage"></div>
+  <button id="idbtest">Run IndexedDB write test</button>
+  <pre id="idblog"></pre>
+</section>
+
+<section>
+  <h2>4. Runtime features</h2>
+  <div id="features"></div>
+</section>
+
+<section>
+  <h2>5. Self-hosted server over cleartext HTTP</h2>
+  <input type="url" id="url" placeholder="http://192.168.1.10:8080/api/setup/status" value="">
+  <button id="probe">Fetch</button>
+  <pre id="netlog"></pre>
+</section>
+
+<script>
+"use strict";
+
+const $ = (id) => document.getElementById(id);
+
+function row(key, value, cls) {
+  const d = document.createElement("div");
+  d.className = "row";
+  const k = document.createElement("div");
+  k.className = "k";
+  k.textContent = key;
+  const v = document.createElement("div");
+  v.className = "v big " + (cls || "");
+  v.textContent = value;
+  d.append(k, v);
+  return d;
+}
+
+function yes(cond) { return cond ? ["supported", "ok"] : ["NOT supported", "bad"]; }
+function fmtBytes(n) {
+  if (n === null || n === undefined || Number.isNaN(n)) return "unknown";
+  const u = ["B", "KB", "MB", "GB", "TB"];
+  let i = 0;
+  while (n >= 1024 && i < u.length - 1) { n /= 1024; i++; }
+  return n.toFixed(n < 10 ? 2 : 0) + " " + u[i];
+}
+
+/* ---------------------------------------------------------------- 1. engine */
+
+(function engine() {
+  const ua = navigator.userAgent;
+  const m = ua.match(/Chrome\/([0-9.]+)/);
+  const host = $("engine");
+  host.append(
+    row("userAgent", ua),
+    row("Chromium", m ? m[1] : "not identifiable",
+        m && parseInt(m[1], 10) >= 132 ? "ok" : "warn"),
+    row("platform", navigator.platform || "n/a"),
+    row("hardwareConcurrency", String(navigator.hardwareConcurrency || "n/a")),
+    row("deviceMemory (GB)", String(navigator.deviceMemory ?? "not exposed")),
+    row("secure context", String(window.isSecureContext)),
+    row("origin", location.origin)
+  );
+})();
+
+/* ---------------------------------------------------------------- 2. stylus */
+
+(function stylus() {
+  const host = $("stylus");
+  const hasPointer = "PointerEvent" in window;
+  host.append(
+    row("PointerEvent", ...yes(hasPointer)),
+    row("navigator.maxTouchPoints", String(navigator.maxTouchPoints ?? "n/a")),
+    row("getCoalescedEvents", ...yes(hasPointer && PointerEvent.prototype.getCoalescedEvents)),
+    row("getPredictedEvents", ...yes(hasPointer && PointerEvent.prototype.getPredictedEvents)),
+    row("onpointerrawupdate", ...yes("onpointerrawupdate" in window))
+  );
+
+  const log = $("styluslog");
+  const seen = Object.create(null);
+  const pad = $("pad");
+
+  function record(e) {
+    const key = e.pointerType || "(none)";
+    seen[key] = (seen[key] || 0) + 1;
+    const lines = Object.keys(seen).map((k) => {
+      const isPen = k === "pen";
+      return k + ": " + seen[k] + (k === "touch" ? "  <-- finger" : "");
+    });
+    log.textContent =
+      "pointerType counts:\n  " + lines.join("\n  ") +
+      "\n\nlast event:\n" +
+      "  pointerType = " + JSON.stringify(e.pointerType) + "\n" +
+      "  pressure    = " + e.pressure + "\n" +
+      "  tiltX/tiltY = " + (e.tiltX ?? "n/a") + " / " + (e.tiltY ?? "n/a") + "\n" +
+      "  width/height= " + e.width + " / " + e.height + "\n" +
+      "  isPrimary   = " + e.isPrimary;
+
+    if (seen.pen) {
+      pad.textContent = "PEN DETECTED — pointerType === \"pen\" works";
+      pad.style.color = "#3ddc84";
+    }
+  }
+
+  for (const type of ["pointerdown", "pointermove", "pointerup"]) {
+    pad.addEventListener(type, record);
+  }
+  // If the engine has no pointer events at all, fall back to touch so we still learn something.
+  if (!hasPointer) {
+    pad.addEventListener("touchstart", (e) => {
+      log.textContent = "No PointerEvent. touchstart fired with " + e.touches.length + " touch(es).";
+    }, { passive: true });
+  }
+})();
+
+/* --------------------------------------------------------------- 3. storage */
+
+async function estimate() {
+  const host = $("storage");
+  host.textContent = "";
+  if (!navigator.storage || !navigator.storage.estimate) {
+    host.append(row("navigator.storage.estimate", ...yes(false)));
+    return;
+  }
+  try {
+    const est = await navigator.storage.estimate();
+    host.append(
+      row("quota", fmtBytes(est.quota), "ok"),
+      row("usage", fmtBytes(est.usage)),
+      row("persisted", String(await navigator.storage.persisted?.() ?? "n/a"))
+    );
+  } catch (error) {
+    host.append(row("estimate() failed", String(error), "bad"));
+  }
+}
+estimate();
+
+$("idbtest").addEventListener("click", async () => {
+  const log = $("idblog");
+  log.textContent = "opening IndexedDB...\n";
+  const targetMB = 32;
+
+  try {
+    const db = await new Promise((resolve, reject) => {
+      const req = indexedDB.open("probe", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("chunks");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+
+    const chunk = new Uint8Array(1024 * 1024);           // 1 MiB
+    crypto.getRandomValues(chunk.subarray(0, 65536));    // keep it incompressible-ish
+
+    let written = 0;
+    for (let i = 0; i < targetMB; i++) {
+      await new Promise((resolve, reject) => {
+        const tx = db.transaction("chunks", "readwrite");
+        tx.objectStore("chunks").put(chunk, i);
+        tx.oncomplete = resolve;
+        tx.onerror = () => reject(tx.error);
+        tx.onabort = () => reject(tx.error);
+      });
+      written++;
+      log.textContent = "written " + written + " / " + targetMB + " MiB";
+    }
+    log.textContent += "\n\nOK — IndexedDB accepted at least " + written + " MiB.";
+    log.className = "ok";
+  } catch (error) {
+    log.textContent += "\n\nFAILED after " + log.textContent.match(/written (\d+)/)?.[1] + " MiB:\n" + error;
+    log.className = "bad";
+  }
+});
+
+/* -------------------------------------------------------------- 4. features */
+
+(function features() {
+  const host = $("features");
+  const checks = [
+    ["WebAssembly", typeof WebAssembly === "object" && typeof WebAssembly.instantiate === "function"],
+    ["WebAssembly (compile a module)", (() => {
+      try { new WebAssembly.Module(new Uint8Array([0, 97, 115, 109, 1, 0, 0, 0])); return true; }
+      catch { return false; }
+    })()],
+    ["Service Worker", "serviceWorker" in navigator],
+    ["IndexedDB", "indexedDB" in window],
+    ["OPFS (navigator.storage.getDirectory)", !!(navigator.storage && navigator.storage.getDirectory)],
+    ["File System Access (showSaveFilePicker)", "showSaveFilePicker" in window],
+    ["fetch", typeof fetch === "function"],
+    ["AbortController", typeof AbortController === "function"],
+    ["TextEncoder / TextDecoder", typeof TextEncoder === "function" && typeof TextDecoder === "function"],
+    ["crypto.subtle", !!(window.crypto && crypto.subtle)],
+    ["CompressionStream", typeof CompressionStream === "function"],
+    ["ResizeObserver", typeof ResizeObserver === "function"],
+    ["IntersectionObserver", typeof IntersectionObserver === "function"],
+    ["visualViewport", !!window.visualViewport],
+    ["CSS env(safe-area-inset-bottom)", CSS.supports("padding-bottom", "env(safe-area-inset-bottom)")],
+    ["Clipboard API (writeText)", !!(navigator.clipboard && navigator.clipboard.writeText)],
+    ["Web Share", typeof navigator.share === "function"],
+    ["Notification", "Notification" in window]
+  ];
+
+  for (const [name, present] of checks) {
+    const [label, cls] = yes(present);
+    host.append(row(name, label, cls));
+  }
+})();
+
+/* ------------------------------------------------------------------ 5. net */
+
+$("probe").addEventListener("click", async () => {
+  const log = $("netlog");
+  const url = $("url").value.trim();
+  if (!url) { log.textContent = "Enter a URL first."; return; }
+
+  log.className = "";
+  log.textContent = "GET " + url + "\n(mixed content is permitted by mixedMode.All)\n";
+  const started = performance.now();
+
+  try {
+    const response = await fetch(url, { method: "GET", mode: "cors", cache: "no-store" });
+    const body = await response.text();
+    const ms = (performance.now() - started).toFixed(0);
+    log.className = response.ok ? "ok" : "warn";
+    log.textContent +=
+      "\nHTTP " + response.status + " " + response.statusText +
+      "\n" + ms + " ms, " + body.length + " bytes\n\n" +
+      body.slice(0, 600);
+  } catch (error) {
+    log.className = "bad";
+    log.textContent +=
+      "\nFAILED: " + error +
+      "\n\nIf this says 'Failed to fetch' or ERR_ACCESS_DENIED, the WebView is blocking the " +
+      "LAN request and enablePrivateNetworkAccess / cleartext policy needs attention.";
+  }
+});
+</script>
+</body>
+</html>

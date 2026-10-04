@@ -205,6 +205,31 @@ Two correctness traps were found only by running it, not by reading:
 2. **Attachment hashes are ambiguous upstream** (see D3), discoverable only by recomputing hashes
    from a real vault.
 
+**HarmonyOS toolchain** — a `.hap` is built from components that require **no Huawei account**:
+
+```
+OpenHarmony SDK 7.0-Release (API 26), SHA-256 verified   repo.huaweicloud.com
+@ohos/hvigor 6.26.8 + @ohos/hvigor-ohos-plugin 6.26.8    repo.harmonyos.com
+
+> hvigor Finished :entry:default@CompileArkTS... after 6 s 713 ms
+> hvigor Finished :entry:default@PackageHap... after 691 ms
+> hvigor BUILD SUCCESSFUL
+
+Built entry-default-unsigned.hap (88,875 bytes)
+  ets/modules.abc                compiled ArkTS, ark24.0.0.0 VM
+  resources/rawfile/probe.html   the capability probe
+```
+
+Reproduce with `apps/harmony-probe/setup-toolchain.sh && apps/harmony-probe/build.sh`.
+
+**Confirmation of the ArkWeb API surface** — read from the SDK's own declarations rather than from
+documentation:
+
+- `WebviewController.enablePrivateNetworkAccess(enable: boolean): void` — **`@since 20`**, confirming
+  it is the API-20 gate the architecture depends on.
+- The `Web` component provides `javaScriptProxy`, `onControllerAttached`, `mixedMode`,
+  `domStorageAccess`, `databaseAccess`, `fileAccess` — everything D1 needs for a shell.
+
 ---
 
 ## 4. Explicitly rejected
@@ -227,27 +252,33 @@ Two correctness traps were found only by running it, not by reading:
 
 1. **Can the owner complete Huawei 实名认证 and register a debug device?** Without it there is no
    on-device testing and no AppGallery publishing. Unverified for non-Chinese developers.
+   Confirmed: the **HarmonyOS** SDK download itself is account-gated (its API chain runs through
+   `getToolVersionDownloadUrl` + `signAgreement` + `querySign`), and automatic signing is GUI-only.
 2. **Does the DevEco emulator work on this M4 / macOS 26.7.1?** Community reports conflict. If not,
    hardware must be procured.
-3. **DevEco Studio is not installed**, so no `.hap` can be produced at all today.
+
+Note that a `.hap` **build** no longer depends on either of these — see §3.
 
 **Blocking, needs a device**
 
-4. **Does ArkWeb deliver `pointerType === "pen"`?** No Huawei doc guarantees it. Every ink feature
+The probe that answers all three of the following is written and **builds successfully** at
+`apps/harmony-probe`. Run it once a device is available.
+
+3. **Does ArkWeb deliver `pointerType === "pen"`?** No Huawei doc guarantees it. Every ink feature
    (b) and (c) depends on this. **Measure first — one day of work.**
-5. **Does `enablePrivateNetworkAccess(false)` (API 20+) plus a cleartext-HTTP opt-in actually allow
+4. **Does `enablePrivateNetworkAccess(false)` (API 20+) plus a cleartext-HTTP opt-in actually allow
    LAN `fetch` to a self-hosted server?** Reported symptom without it is `-10 ERR_ACCESS_DENIED`.
-6. **What is ArkWeb's real IndexedDB quota?** Unverified, and it determines whether the vault fits.
+5. **What is ArkWeb's real IndexedDB quota?** Unverified, and it determines whether the vault fits.
 
 **Design risks**
 
-7. **Protocol version pinning.** `syncVersion` is a bare equality check with no negotiation —
+6. **Protocol version pinning.** `syncVersion` is a bare equality check with no negotiation —
    the server hard-rejects a mismatch with a 400 and there is no fallback. The released 0.106.0 image
    reports **39**; `main` reports 40. The client must read it and fail with a clear message.
-8. **Tombstones are never garbage-collected** and are folded into the content hash, so a fresh client
+7. **Tombstones are never garbage-collected** and are folded into the content hash, so a fresh client
    replays all history. For this vault that is 24 936 rows (11.6% tombstones), which is comfortably
    feasible — but first sync must still be resumable and chunked from day one.
-9. **Clock skew > 5 minutes fails sync login** with a 401 that says nothing about credentials.
+8. **Clock skew > 5 minutes fails sync login** with a 401 that says nothing about credentials.
 
 ---
 

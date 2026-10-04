@@ -9,3 +9,12 @@ build/
 
 # Shallow clones of upstream projects, kept only for reading source.
 reference/
+
+# Downloaded SDKs and build toolchains. Recreated by apps/harmony-probe/setup-toolchain.sh.
+.toolchain/
+
+# HarmonyOS build outputs.
+.hvigor/
+apps/harmony-probe/entry/build/
+apps/harmony-probe/local.properties
+apps/harmony-probe/package-lock.json

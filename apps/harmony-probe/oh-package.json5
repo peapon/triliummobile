@@ -1,0 +1,13 @@
+{
+  "modelVersion": "6.0.0",
+  "name": "harmony-probe",
+  "version": "1.0.0",
+  "description": "ArkWeb capability probe for the Trilium mobile client",
+  "main": "",
+  "author": "",
+  "license": "AGPL-3.0-only",
+  "dependencies": {},
+  "devDependencies": {
+    "@ohos/hvigor-ohos-plugin": "6.26.8"
+  }
+}

@@ -1,0 +1,10 @@
+{
+  "name": "harmony-probe-toolchain",
+  "private": true,
+  "version": "1.0.0",
+  "description": "Local hvigor toolchain for the ArkWeb probe",
+  "dependencies": {
+    "@ohos/hvigor": "6.26.8",
+    "@ohos/hvigor-ohos-plugin": "6.26.8"
+  }
+}

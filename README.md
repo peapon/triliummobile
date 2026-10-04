@@ -15,7 +15,23 @@ This README is the operator's view: what exists, how to run it, and what has act
 | Sync engine (journal, cursors, conflict bounce-back, resumability) | **Not started** |
 | Local store (IndexedDB adapter) | **Not started** |
 | UI (phone: capture/search/view; pad: + light edit + ink) | **Not started** |
-| Native shells (ArkTS / Capacitor) | **Not started** — no toolchain on this machine |
+| HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
+| HarmonyOS runtime behaviour (pen input, LAN fetch, storage quota) | **Awaiting a device** — probe written and building |
+
+## Building the HarmonyOS probe
+
+Fully public toolchain; no Huawei account required to build (signing and installing do need one).
+
+```bash
+cd apps/harmony-probe
+./setup-toolchain.sh    # OpenHarmony SDK 7.0 (API 26) + hvigor, checksum verified
+./build.sh              # -> entry/build/default/outputs/default/entry-default-unsigned.hap
+```
+
+The probe answers the three questions that decide the client's architecture — stylus
+`pointerType === "pen"`, cleartext LAN `fetch`, and the real IndexedDB quota — plus it reports the
+WebView's actual Chromium version. See [docs/harmonyos-setup.md](docs/harmonyos-setup.md) for what
+still requires a Huawei account and a device.
 
 ## Running the verification
 
@@ -77,13 +93,15 @@ pnpm exec tsx tools/diagnose-hash.ts attachments <entityId>
 ## Layout
 
 ```
-src/crypto/      pure-JS digests + Trilium's exact hash rules
-src/entities/    hashedProperties, boolean coercion, blob hash override
-src/sync/        wire types, HTTP transport, content-hash fold
-tools/           verification harnesses (hash comparison, protocol probe, diagnostics)
-docs/research/   four source-cited research reports
-docs/adr/        architecture decision records
-reference/       shallow clones of upstream Trilium and TriliumDroid, for reading source only
+src/crypto/          pure-JS digests + Trilium's exact hash rules
+src/entities/        hashedProperties, boolean coercion, blob hash override
+src/sync/            wire types, HTTP transport, content-hash fold
+tools/               verification harnesses (hash comparison, protocol probe, diagnostics)
+apps/harmony-probe/  ArkWeb capability probe + no-account .hap build toolchain
+docs/research/       four source-cited research reports
+docs/adr/            architecture decision records
+docs/harmonyos-setup.md   what needs a Huawei account, and what does not
+reference/           shallow clones of upstream Trilium and TriliumDroid, for reading source only
 ```
 
 ## Two things worth knowing before changing this code
