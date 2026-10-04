@@ -48,9 +48,11 @@ Route registration (authoritative, all in one function):
 | 10 | `GET` | `/api/setup/sync-seed` | password (`trilium-cred`) | — | `{options:[{name,value}], syncVersion}` |
 | 11 | `POST` | `/api/setup/sync-seed` | none (refused if data present) | `{options, syncVersion}` | `204` / `400 {error}` |
 | 12 | `GET` | `/api/setup/status` | none | — | `{isInitialized, schemaExists, syncVersion, hasExistingData, …}` |
-| 13 | `POST` | `/api/sync/now`, `/api/sync/test` | session | — | `{success, message?, errorCode?}` |
-| 14 | `POST` | `/api/sync/force-full-sync`, `/api/sync/fill-entity-changes` | session | — | `204` |
-**1–7 are the protocol.** 8–14 are admin/setup conveniences — a client may implement 1–5 only.
+
+Admin triggers, all session-authenticated: `POST /api/sync/now` and `/api/sync/test` →
+`{success, message?, errorCode?}`; `POST /api/sync/force-full-sync` and `/api/sync/fill-entity-changes` → `204`.
+
+**1–7 are the protocol.** 8–12 plus the triggers are admin/setup conveniences — a client may implement 1–5 only.
 
 ### Auth scheme (non-obvious)
 - **Not** HTTP Basic, **not** Bearer. `/api/login/sync` verifies an HMAC then sets `req.session.loggedIn = true`
@@ -396,19 +398,14 @@ never needs the password.
   for memory-capped runtimes.
 
 ### 5.3 On-demand / out-of-band endpoints (not sync, but useful)
-For lazily fetching content the sync stream withheld:
-
-| Path | Returns |
-|---|---|
-| `GET /api/notes/{noteId}/blob` | `{blobId, content, contentLength, dateModified, utcDateModified, textRepresentation, isStubbed}` |
-| `GET /api/attachments/{attachmentId}/blob` | same shape |
-| `GET /api/revisions/{revisionId}/blob` | same |
-| `GET /api/deleted-notes/{noteId}/blob` | blob of a soft-deleted note |
-| `GET /api/notes/{noteId}/open`, `/download`, `/open-partial` | raw bytes, byte-range capable |
-
+For lazily fetching content the sync stream withheld, all returning the blob POJO
+`{blobId, content, contentLength, dateModified, utcDateModified, textRepresentation, isStubbed}`:
+`GET /api/notes/{noteId}/blob`, `GET /api/attachments/{attachmentId}/blob`,
+`GET /api/revisions/{revisionId}/blob`, `GET /api/deleted-notes/{noteId}/blob` (soft-deleted notes), and
+`GET /api/notes/{noteId}/open` | `/download` | `/open-partial` (raw bytes, byte-range capable).
 Registration: [`routes/index.ts#L102`, `#L127`, `#L144`, `#L331`, `#L334-L346`](https://github.com/TriliumNext/Trilium/blob/main/packages/trilium-core/src/routes/index.ts#L102).
-Note `/api/notes/{noteId}/blob` returns **decrypted** content only if a protected session is available;
-otherwise `content: ""` (`blob.ts#L90-L111`).
+`/api/notes/{noteId}/blob` returns **decrypted** content only if a protected session is available; otherwise
+`content: ""` (`blob.ts#L90-L111`).
 
 ---
 
@@ -497,15 +494,14 @@ at [`docs/Developer Guide/Developer Guide/Concepts/Synchronisation/`](https://gi
 - `database/Cache.kt` → `Versions.SUPPORTED_SYNC_VERSIONS` / `SUPPORTED_DATABASE_VERSIONS` — the
   client-side dbVersion gate the server does not do.
 
-Notable TriliumDroid quirks to avoid copying: it hardcodes
-`lastSyncedPush`/`lastSyncedPull` as options rows, uses a fixed `logMarkerId = "trilium-droid"`, skips the
-`/api/sync/check` content-hash verification entirely, and reads `lastSyncedPull` as a float defensively
-(L213–216, "the user may have imported a TriliumNext database where this is a float"). That last one is a
-genuine cross-implementation hazard worth preserving.
+Notable TriliumDroid quirks: it hardcodes the `lastSyncedPush`/`lastSyncedPull` options rows, uses a fixed
+`logMarkerId = "trilium-droid"`, **skips `/api/sync/check` verification entirely**, and reads `lastSyncedPull`
+as a float defensively (L213–216, "the user may have imported a TriliumNext database where this is a float") —
+a genuine cross-implementation hazard worth preserving.
 
-**Recommended approach:** port `Sync.kt` + `ConnectionUtil.kt` to the target language as a *starting point*,
-but add the `/api/sync/check` verification loop (§4.4) and the bounce-back conflict path (§4.2) that
-TriliumDroid omits — without them a client can diverge silently.
+**Recommended approach:** port `Sync.kt` + `ConnectionUtil.kt` as a *starting point*, but add the
+`/api/sync/check` verification loop (§4.4) and the bounce-back conflict path (§4.2) that TriliumDroid omits —
+without them a client can diverge silently.
 
 ---
 

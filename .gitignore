@@ -3,4 +3,9 @@ dist/
 build/
 .DS_Store
 *.log
+
+# Disposable Trilium server data used for integration testing (Docker volume).
 .trilium-test-data/
+
+# Shallow clones of upstream projects, kept only for reading source.
+reference/
