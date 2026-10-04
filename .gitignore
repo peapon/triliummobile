@@ -18,3 +18,8 @@ reference/
 apps/harmony-probe/entry/build/
 apps/harmony-probe/local.properties
 apps/harmony-probe/package-lock.json
+
+# DevEco Studio per-machine project state.
+apps/harmony-probe/.idea/
+apps/harmony-probe/.codegenie
+apps/harmony-probe/.hvigor/
