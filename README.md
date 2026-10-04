@@ -15,7 +15,8 @@ This README is the operator's view: what exists, how to run it, and what has act
 | Local replica (schema, journal, conflict bounce-back, tombstones) | **Done and verified** — full round-trip against a real server |
 | Offline capture (`createTextNote`) | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
 | Content-hash verification loop | **Done** — folds the journal sector by sector, with re-queue retry |
-| UI (phone: capture/search/view; pad: + light edit + ink) | **Not started** |
+| **Phone UI (capture / search / browse)** | **Working and browser-verified** — 12 E2E checks against a real server |
+| Pad UI (light editing + ink) | **Not started** |
 | HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
 | HarmonyOS runtime behaviour (pen input, LAN fetch, storage quota) | **Awaiting a device** — probe written and building |
 
@@ -33,6 +34,37 @@ verifies each phase independently:
 
 Phase 3 is the one that matters: a push returning `204` proves nothing, so the check reads the
 server's SQLite file directly.
+
+## Running the app
+
+The UI runs the same protocol core the Node tests do, in a Web Worker.
+
+```bash
+# 1. a Trilium server to talk to (skip if you have one)
+docker run -d --name trilium-test -p 18740:8080 \
+  -v "$PWD/.trilium-test-data:/home/node/trilium-data" triliumnext/trilium:latest
+curl -X POST http://127.0.0.1:18740/api/setup/new-document -H 'Content-Type: application/json' -d '{}'
+curl -X POST http://127.0.0.1:18740/set-password -H 'Content-Type: application/json' \
+  -d '{"password1":"triliumtest123","password2":"triliumtest123"}'
+
+# 2. the app
+cd apps/web && pnpm exec vite --port 5273 --strictPort --host 127.0.0.1
+# open http://127.0.0.1:5273/ — leave the server field at the page's own origin
+```
+
+The server field must be **same-origin**. Trilium answers with
+`Cross-Origin-Resource-Policy: same-origin`, so a page elsewhere cannot read its API at all — the
+dev server proxies `/api` onward to the real server. See ADR D9 for what the shipped app does instead.
+
+### Verifying the app in a real browser
+
+```bash
+pnpm exec tsx tools/e2e-web.ts
+```
+
+Boots the UI in headless Chrome at phone dimensions, runs the setup flow, captures a note, syncs,
+and then **reads the server's own SQLite file** to confirm the note arrived — a `204` from the push
+proves nothing on its own. Also writes screenshots to `/tmp/triliummobile-*.png`.
 
 ## Building the HarmonyOS probe
 
@@ -121,11 +153,12 @@ pnpm exec tsx tools/diagnose-hash.ts attachments <entityId>
 ```
 src/crypto/          pure-JS digests + Trilium's exact hash rules
 src/entities/        hashedProperties, boolean coercion, blob hash override
-src/store/           server schema, journal application, offline capture, cursors
+src/store/           server schema, journal application, offline capture, cursors, sqlite adapters
 src/sync/            wire types, HTTP transport, content-hash fold, sync engine
 src/util/            random ids
-tools/               verification harnesses (round-trip, hash comparison, protocol probe, diagnostics)
+apps/web/            phone-first UI; owns the worker that holds the database
 apps/harmony-probe/  ArkWeb capability probe + no-account .hap build toolchain
+tools/               verification harnesses (browser E2E, round-trip, hash comparison, probes)
 docs/research/       four source-cited research reports
 docs/adr/            architecture decision records
 docs/harmonyos-setup.md   what needs a Huawei account, and what does not
@@ -138,9 +171,23 @@ reference/           shallow clones of upstream Trilium and TriliumDroid, for re
 not derived — see ADR D3. Upstream's own hashes are ambiguous for `attachments`, so recomputation is
 both unnecessary and, for historical rows, impossible.
 
+**When you do compute one, hash the *entity row*, not the SQLite row.** Upstream hashes entity objects,
+where `isProtected` is `!!row.isProtected` — a boolean. Hashing the raw row emits `"0"` where Trilium
+emits `"false"`, so the change carries a hash no peer agrees with; sync still converges because hashes
+are carried, but every later edit elsewhere reports a spurious mismatch. `toEntityRow()` exists for
+this, and `tools/verify-hashes.ts` catches it: the fresh server reproduces **2872/2872 (100%)** even
+after notes have been written through this client's own code.
+
 **`isErased` is a raw SQLite integer in the content-hash fold, not a boolean.** Upstream reads it via
 `getRawRows()`, so the sector string is `hash + "1"`. Using a boolean mismatches *every* sector while
 every HTTP call still succeeds. `src/sync/content-hash.spec.ts` pins this.
+
+**Nothing under `src/` may use a Node-only global.** The whole core runs unchanged inside a WebView
+worker. `Buffer` slipped in once and every Node test passed because Node has it; the browser died on
+`Buffer is not defined`. Use `src/crypto/bytes.ts`.
+
+**The database must be opened from a Worker, not the page.** The OPFS SAH-Pool VFS needs
+`createSyncAccessHandle`, which browsers only expose to workers.
 
 ## License
 

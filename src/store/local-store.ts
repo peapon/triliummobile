@@ -12,7 +12,7 @@
  * ambiguity upstream's own history has (see `../entities/hashes.ts`).
  */
 
-import { calculateBlobHash, generateEntityHash } from "../entities/hashes.js";
+import { calculateBlobHash, generateEntityHash, toEntityRow } from "../entities/hashes.js";
 import { base64Decode, hashedBlobId } from "../crypto/index.js";
 import { randomString } from "../util/random.js";
 import type { SqlDatabase, SqlValue } from "./database.js";
@@ -407,6 +407,11 @@ export class LocalStore {
       this.replaceRow("notes", noteRow);
       this.replaceRow("branches", branchRow);
 
+      // The rows go through `toEntityRow` first, because upstream hashes *entity objects* — where
+      // `isProtected` is `!!row.isProtected`, i.e. a boolean — not the raw INTEGER 0/1 from SQLite.
+      // Hashing the raw row produces `"0"` where Trilium produces `"false"`, so the local change
+      // carries a hash no other peer agrees with. Sync still converges (hashes are carried, D3), but
+      // every later edit on another device reports a spurious content-hash mismatch.
       this.putEntityChange({
         entityName: "blobs",
         entityId: blobId,
@@ -418,7 +423,7 @@ export class LocalStore {
       this.putEntityChange({
         entityName: "notes",
         entityId: noteId,
-        hash: generateEntityHash("notes", noteRow),
+        hash: generateEntityHash("notes", toEntityRow("notes", noteRow)),
         isErased: 0,
         utcDateChanged: utc,
         isSynced: 1
@@ -426,7 +431,7 @@ export class LocalStore {
       this.putEntityChange({
         entityName: "branches",
         entityId: branchId,
-        hash: generateEntityHash("branches", branchRow),
+        hash: generateEntityHash("branches", toEntityRow("branches", branchRow)),
         isErased: 0,
         utcDateChanged: utc,
         isSynced: 1

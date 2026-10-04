@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach } from "vitest";
 
-import { generateEntityHash } from "../entities/hashes.js";
+import { generateEntityHash, toEntityRow } from "../entities/hashes.js";
 import type { SqlDatabase, SqlValue } from "./database.js";
 import { LocalStore } from "./local-store.js";
 import { SCHEMA_SQL } from "./schema.js";
@@ -345,8 +345,25 @@ describe("createTextNote", () => {
         "SELECT hash FROM entity_changes WHERE entityName = ? AND entityId = ?",
         [entityName, entityId]
       );
-      expect(ec?.hash).toBe(generateEntityHash(entityName, row as Record<string, unknown>));
+
+      // The hash must match what a *peer* recomputes from the stored row, which is the whole point
+      // of the content-hash check. Hashing the raw row instead of the normalised entity row is the
+      // trap: `isProtected` is INTEGER 0 in SQLite but boolean false in the entity upstream hashes,
+      // and "0" != "false" produces a hash no other replica agrees with.
+      expect(ec?.hash).toBe(generateEntityHash(entityName, toEntityRow(entityName, row as Record<string, unknown>)));
     }
+  });
+
+  it("hashes booleans the way a peer recomputing from the stored row would", () => {
+    const { noteId } = store.createTextNote({ parentNoteId: "root", title: "T", content: "c" });
+    const row = db.get<Record<string, unknown>>("SELECT * FROM notes WHERE noteId = ?", [noteId]);
+    const ec = db.get<{ hash: string }>("SELECT hash FROM entity_changes WHERE entityId = ?", [noteId]);
+
+    // The normalised form is the correct one...
+    expect(ec?.hash).toBe(generateEntityHash("notes", toEntityRow("notes", row as Record<string, unknown>)));
+
+    // ...and it is emphatically not the raw-row form, which would silently disagree with every peer.
+    expect(ec?.hash).not.toBe(generateEntityHash("notes", row as Record<string, unknown>));
   });
 
   it("assigns increasing note positions under the same parent", () => {
