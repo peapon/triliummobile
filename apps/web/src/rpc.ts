@@ -73,6 +73,12 @@ export interface AppApi {
   ): Promise<{ fetched: boolean; stubbed: boolean; bytes: number; error?: string }>;
   cacheStats(): Promise<{ entries: number; bytes: number; stubbed: number; budget: number }>;
   setBlobBudget(bytes: number): Promise<void>;
+  /**
+   * Tell the worker to route HTTP through the native bridge rather than `fetch`.
+   *
+   * The worker cannot detect the shell itself: the injected object exists on the main frame only.
+   */
+  useNativeHttp(enabled: boolean): Promise<void>;
   configure(serverHost: string, password: string): Promise<void>;
   sync(): Promise<SyncSummary>;
   pendingPushCount(): Promise<number>;
@@ -89,7 +95,33 @@ export type RpcResponse =
   | { id: number; ok: true; result: unknown }
   | { id: number; ok: false; error: string };
 
-export type WorkerMessage = RpcResponse | { event: "progress"; progress: ProgressEvent };
+/**
+ * One HTTP request the worker wants performed, and its result.
+ *
+ * The sync engine lives in the worker (the OPFS database has to), but on HarmonyOS the only way out
+ * to the network is the `triliumNative` bridge, which is injected into the main frame alone. So the
+ * worker hands each request up and waits.
+ */
+export interface HttpRelayRequest {
+  url: string;
+  method: string;
+  headers: Record<string, string>;
+  bodyBase64: string;
+}
+
+export interface HttpRelayResult {
+  status: number;
+  headers: Record<string, string>;
+  bodyBase64: string;
+  error?: string;
+}
+
+export type WorkerMessage =
+  | RpcResponse
+  | { event: "progress"; progress: ProgressEvent }
+  | { event: "http"; id: number; request: HttpRelayRequest };
+
+export type MainMessage = { event: "httpResult"; id: number; result: HttpRelayResult };
 
 /**
  * Promise-per-call proxy over `postMessage`. Deliberately minimal: no request batching, no
@@ -159,6 +191,7 @@ export class WorkerClient implements AppApi {
   fetchAttachmentBlob = (attachmentId: string) => this.call("fetchAttachmentBlob", attachmentId);
   cacheStats = () => this.call("cacheStats");
   setBlobBudget = (bytes: number) => this.call("setBlobBudget", bytes);
+  useNativeHttp = (enabled: boolean) => this.call("useNativeHttp", enabled);
   configure = (serverHost: string, password: string) => this.call("configure", serverHost, password);
   sync = () => this.call("sync");
   pendingPushCount = () => this.call("pendingPushCount");

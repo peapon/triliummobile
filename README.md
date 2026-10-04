@@ -21,6 +21,7 @@ This README is the operator's view: what exists, how to run it, and what has act
 | ArkTS shell packaging the web core as a `.hap` | **Not started** — toolchain ready |
 | HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
 | HarmonyOS runtime behaviour | **Measured on a real API 26 emulator** — see [docs/harmonyos-verified.md](docs/harmonyos-verified.md) |
+| **HarmonyOS app (web core in an ArkTS shell)** | **Running and syncing both ways on the emulator** |
 | Stylus `pointerType === "pen"` | **Still unproven** — needs a physical device with a stylus |
 
 ## What the round-trip proves
@@ -69,7 +70,20 @@ Boots the UI in headless Chrome at phone dimensions, runs the setup flow, captur
 and then **reads the server's own SQLite file** to confirm the note arrived — a `204` from the push
 proves nothing on its own. Also writes screenshots to `/tmp/triliummobile-*.png`.
 
-## Building the HarmonyOS probe
+## Building the HarmonyOS app
+
+The shipped HarmonyOS artifact is the same web client, packaged with a small ArkTS shell that gives
+it a real origin and routes its network calls natively.
+
+```bash
+cd apps/harmony-probe
+./package-app.sh          # builds apps/web, stages it, produces an unsigned .hap
+```
+
+No Huawei account is needed to build or to install on the emulator. Deploying to a physical device
+does need one — see [docs/harmonyos-verified.md](docs/harmonyos-verified.md).
+
+## Building the capability probe
 
 Fully public toolchain; no Huawei account required to build (signing and installing do need one).
 

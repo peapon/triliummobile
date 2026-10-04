@@ -15,6 +15,9 @@
  */
 
 import sqlite3InitModule from "@sqlite.org/sqlite-wasm";
+// Resolved by the bundler to the emitted, content-hashed asset. A fixed path cannot work: the
+// filename changes with the content, so the loader has to be told where it actually landed.
+import sqliteWasmUrl from "@sqlite.org/sqlite-wasm/sqlite3.wasm?url";
 
 import type { SqlDatabase, SqlValue } from "./database.js";
 
@@ -101,7 +104,18 @@ export async function openSqliteWasmDatabase(
 ): Promise<SqlDatabase> {
   const { filename = "document.db", vfs = detectDefaultVfs(), capacity } = options;
 
-  const sqlite3 = await sqlite3InitModule();
+  // `locateFile` because the bundled JavaScript cannot resolve the package's own directory at
+  // runtime; the shell serves the .wasm next to the app and tells the loader where to find it.
+  //
+  // The published types declare `init()` with no parameters, but the Emscripten module it returns
+  // accepts the usual configuration object. The cast records that gap rather than hiding it.
+  const init = sqlite3InitModule as unknown as (config?: {
+    locateFile?: (file: string) => string;
+  }) => Promise<Awaited<ReturnType<typeof sqlite3InitModule>>>;
+
+  const sqlite3 = await init({
+    locateFile: (file) => (file.endsWith(".wasm") ? sqliteWasmUrl : `/${file}`)
+  });
 
   if (vfs === "opfs-sahpool") {
     // The SAH-Pool VFS is deliberately not the default VFS: it must be installed explicitly, and it

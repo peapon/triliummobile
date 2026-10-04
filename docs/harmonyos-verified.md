@@ -132,6 +132,69 @@ HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/
 
 ---
 
+## 应用已经跑起来了：端到端在这一刻闭环
+
+`apps/harmony-probe` 现在装的不再是探针，而是**真正的客户端**。用 `./package-app.sh` 打包，
+产物 1.47 MB，里面是完整的 Web 核心 + ArkTS 壳。
+
+设备上实测的完整协议往返（从 hilog 读出）：
+
+```
+-> GET  /api/setup/status                              body=0    cookie=no
+-> POST /api/login/sync                                body=148  contentType=application/json
+-> GET  /api/sync/changed?...lastEntityChangeId=0                 cookie=yes
+-> GET  /api/sync/changed?...lastEntityChangeId=3915              cookie=yes
+-> POST /api/sync/finished
+-> GET  /api/sync/check
+shell: boot sync finished ok=true  "同步完成：拉取 2909 项，用时 0.7s"
+```
+
+**写入方向**同样验证过。在模拟器上离线速记一条，然后**读服务端自己的数据库**确认：
+
+```
+FOUND nphsq9BOXYyg  鸿蒙设备速记 013516
+content: <p>由鸿蒙设备离线创建：鸿蒙设备速记 013516</p>
+```
+
+### 三个必需机制，每一个都是被实测逼出来的
+
+**1. 页面必须有一个真实 origin。** `resource://rawfile` 的 origin 是 `null`，实测结果：
+
+```
+new Worker("probe.worker.js")
+  -> SecurityError: Script at 'resource://rawfile/probe.worker.js'
+     cannot be accessed from origin 'null'
+navigator.storage.getDirectory()
+  -> SecurityError: ... files are unsafe for access within a Web application
+```
+
+也就是说**没有 Worker、没有 OPFS**——而客户端两者都要（OPFS SAH-Pool VFS 因为是
+`createSyncAccessHandle` 所以只能在 Worker 里跑，而副本就存在 OPFS）。
+
+解法：**用 `onInterceptRequest` 把静态资源从包里发出去，页面从 `https://localhost/` 加载**。
+于是 origin 变成真的，Worker 和 OPFS 都可用，而且**不需要在应用里跑任何服务器**。
+
+**2. `onInterceptRequest` 是同步的，所以它代理不了 API。** 它签名的返回值类型是
+`WebResourceResponse`，没法等一个网络往返。所以 `https://localhost/api/...` 只能返回 `null`。
+
+解法：静态资源走拦截，API 走 `javaScriptProxy` 注入的 `triliumNative.request(...)`——
+一个异步方法，网页可以 await。
+
+**3. 桥在主线程，但引擎在 Worker 里。** 同步引擎必须在 Worker 里（数据库在那儿），
+而注入对象只存在于主 frame。所以 Worker 把每个请求交给主线程转发，主线程调桥，再把结果送回去。
+`SyncTransport` 本来就接受 `fetchImpl`，所以协议代码**一行没改**。
+
+### 打包
+
+```bash
+cd apps/harmony-probe
+./package-app.sh                       # 生产构建
+./package-app.sh --e2e http://10.0.2.2:18740 <password> "标题"   # 设备端自检构建
+```
+
+`--e2e` 会把服务端地址与密码编进包里，让应用开机自动配置并同步——因为模拟器能驱动触摸，
+但驱动不了 WebView 的 DOM，否则没法脚本化验证。生产构建不含这些变量，函数是惰性的。
+
 ## 尚未做
 
 - **真机**：需要华为账号实名认证 + 设备绑定证书。模拟器覆盖了绝大部分运行时问题，但

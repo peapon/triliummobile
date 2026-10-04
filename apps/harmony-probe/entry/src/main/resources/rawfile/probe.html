@@ -303,7 +303,8 @@ function report() {
       stylusCounts: seen,
       penSeen: Boolean(seen.pen)
     },
-    network
+    network,
+    workers
   };
 
   console.log("PROBE_JSON " + JSON.stringify(payload));
@@ -356,8 +357,67 @@ async function probeNetwork() {
   }
 }
 
-// Give the network probes time to settle before the single report line goes out.
-probeNetwork().finally(() => setTimeout(report, 500));
+/**
+ * The capability the client's storage layer actually needs.
+ *
+ * `sqlite-wasm` with the OPFS SAH-Pool VFS requires a Worker (because `createSyncAccessHandle` is
+ * worker-only) *and* an origin OPFS accepts. A `resource://rawfile` page satisfies neither on paper,
+ * so both the worker and the main thread are measured here rather than assumed.
+ */
+const workers = {};
+
+function testWorker(kind, options) {
+  return new Promise((resolve) => {
+    let worker;
+    try {
+      worker = new Worker("probe.worker.js", options);
+    } catch (error) {
+      resolve({ spawned: false, error: String(error) });
+      return;
+    }
+
+    const timer = setTimeout(() => {
+      worker.terminate();
+      resolve({ spawned: true, responded: false, error: "timed out" });
+    }, 8000);
+
+    worker.onmessage = (event) => {
+      clearTimeout(timer);
+      worker.terminate();
+      resolve({ spawned: true, responded: true, ...event.data });
+    };
+
+    worker.onerror = (event) => {
+      clearTimeout(timer);
+      worker.terminate();
+      resolve({ spawned: true, responded: false, error: event.message || "worker error" });
+    };
+  });
+}
+
+async function probeWorkers() {
+  workers.classic = await testWorker("classic");
+  workers.module = await testWorker("module", { type: "module" });
+
+  // And the same OPFS calls from the page itself, as the control.
+  try {
+    const root = await navigator.storage.getDirectory();
+    const handle = await root.getFileHandle("probe-main.txt", { create: true });
+    const writable = await handle.createWritable();
+    await writable.write("main-thread-ok");
+    await writable.close();
+    workers.mainThreadOpfs = "ok";
+    workers.mainThreadSyncAccessHandle =
+      typeof handle.createSyncAccessHandle === "function" ? "present" : "missing";
+  } catch (error) {
+    workers.mainThreadOpfs = String(error);
+  }
+}
+
+// Give the asynchronous probes time to settle before the single report line goes out.
+probeNetwork()
+  .then(probeWorkers)
+  .finally(() => setTimeout(report, 500));
 
 $("probe").addEventListener("click", async () => {
   const log = $("netlog");

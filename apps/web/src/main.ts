@@ -12,6 +12,7 @@
 
 import { toSnippet, type NoteDetail, type NoteSummary } from "./data.js";
 import { InkCanvas, createInkDoc, paintInk, parseInkDoc, serializeInkDoc } from "./ink.js";
+import { hasNativeBridge, nativeFetch } from "./native-fetch.js";
 import { WorkerClient, type AppCounts, type ProgressEvent } from "./rpc.js";
 import "./style.css";
 
@@ -74,6 +75,76 @@ let inkCanvas: InkCanvas | null = null;
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const api = new WorkerClient(worker);
+
+/**
+ * Perform the worker's HTTP through the shell.
+ *
+ * The worker holds the database and therefore the sync engine, but the native bridge is injected
+ * into this frame only, so every request the engine makes arrives here to be forwarded.
+ */
+worker.addEventListener("message", (event: MessageEvent) => {
+  const data = event.data as { event?: string; id?: number; request?: unknown };
+  if (data?.event !== "http" || typeof data.id !== "number" || !data.request) return;
+
+  const request = data.request as {
+    url: string;
+    method: string;
+    headers: Record<string, string>;
+    bodyBase64: string;
+  };
+
+  const bytes = request.bodyBase64 ? base64ToBytes(request.bodyBase64) : undefined;
+
+  nativeFetch(request.url, {
+    method: request.method,
+    headers: request.headers,
+    ...(bytes && bytes.byteLength > 0 ? { body: bytes } : {})
+  })
+    .then(async (response) => {
+      const buffer = new Uint8Array(await response.arrayBuffer());
+      const headers: Record<string, string> = {};
+      response.headers.forEach((value, key) => {
+        headers[key] = value;
+      });
+
+      worker.postMessage({
+        event: "httpResult",
+        id: data.id,
+        result: {
+          status: response.status,
+          headers,
+          bodyBase64: bytesToBase64(buffer)
+        }
+      });
+    })
+    .catch((error: unknown) => {
+      worker.postMessage({
+        event: "httpResult",
+        id: data.id,
+        result: {
+          status: 0,
+          headers: {},
+          bodyBase64: "",
+          error: error instanceof Error ? error.message : String(error)
+        }
+      });
+    });
+});
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let out = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(out);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
 const app = document.getElementById("app") as HTMLDivElement;
 
 api.progressHandler = (progress) => {
@@ -95,15 +166,95 @@ async function boot(): Promise<void> {
 
   try {
     await api.ready();
+
+    // Tell the worker where its network comes from before anything tries to use it.
+    const bridged = hasNativeBridge();
+    await api.useNativeHttp(bridged);
+    console.log(`shell: native bridge ${bridged ? "active" : "absent"}, origin ${location.origin}`);
+
     await refreshChrome();
+    console.log(`shell: configured=${state.configured}`);
+
     await render();
+    console.log("shell: rendered");
+
+    await autoConfigureForTest();
   } catch (error) {
+    // Logged as well as shown: on a device the screen is unreadable from a script, and an unlogged
+    // throw here is invisible.
+    console.log(`shell: boot failed: ${error instanceof Error ? error.stack ?? error.message : error}`);
+
     app.innerHTML = `
       <div class="setup">
         <h2>无法打开本地数据库</h2>
         <p>${escapeHtml(String(error))}</p>
-        <p>此应用需要 OPFS 存储，必须通过 http(s) 访问。</p>
       </div>`;
+  }
+}
+
+/**
+ * Write a note the way the capture screen does, then sync it.
+ *
+ * The read direction is proven by the boot sync. This proves the write direction from the device —
+ * and the evidence is read out of the server's own database afterwards, not taken from a 2xx.
+ */
+async function captureForTest(): Promise<void> {
+  const marker = import.meta.env?.VITE_E2E_CAPTURE;
+  if (!marker) return;
+
+  try {
+    const inbox = await api.inboxNoteId();
+    const created = await api.createTextNote({
+      parentNoteId: inbox,
+      title: marker,
+      content: `<p>由鸿蒙设备离线创建：${marker}</p>`
+    });
+
+    console.log(`shell: captured note ${created.noteId} locally`);
+
+    await refreshChrome();
+    console.log(`shell: pending after capture = ${state.pending}`);
+
+    await runSync();
+    console.log(`shell: post-capture sync ok=${state.lastOk} message="${state.lastMessage}"`);
+  } catch (error) {
+    console.log(`shell: capture failed: ${error instanceof Error ? error.message : error}`);
+  }
+}
+
+/**
+ * Configure from build-time credentials, for the on-device end-to-end run.
+ *
+ * A shipped build has neither variable set, so this is inert in production. It exists because the
+ * emulator can drive touch input but not a WebView's DOM, so the setup form cannot otherwise be
+ * completed from a script.
+ */
+async function autoConfigureForTest(): Promise<void> {
+  const server = import.meta.env?.VITE_E2E_SERVER;
+  const password = import.meta.env?.VITE_E2E_PASSWORD;
+
+  if (!server || !password) return;
+
+  try {
+    if (!state.configured) {
+      console.log(`shell: test auto-configure against ${server}`);
+      await api.configure(server, password);
+      await refreshChrome();
+      await render();
+    } else {
+      console.log(`shell: already configured against ${state.serverHost}`);
+    }
+
+    // Always sync on boot in a test build: that is the thing being verified on the device.
+    await runSync();
+    console.log(
+      `shell: boot sync finished ok=${state.lastOk} message="${state.lastMessage}" ` +
+        `pending=${state.pending}`
+    );
+
+    await captureForTest();
+  } catch (error) {
+    console.log(`shell: auto-configure failed: ${error instanceof Error ? error.message : error}`);
   }
 }
 
@@ -740,9 +891,10 @@ async function runSync(): Promise<void> {
 // -------------------------------------------------------------------- setup
 
 function renderSetup(error?: string): void {
-  // Defaults to this page's own origin, which is what actually works in a browser: the server sends
-  // `Cross-Origin-Resource-Policy: same-origin`, so a page elsewhere cannot read its API at all.
-  const host = state.serverHost ?? location.origin;
+  // In a browser the only address that can work is this page's own origin (the server sends
+  // `Cross-Origin-Resource-Policy: same-origin`). Inside the shell the request goes out natively, so
+  // the field must hold the server's real address instead.
+  const host = state.serverHost ?? (hasNativeBridge() ? "" : location.origin);
 
   app.innerHTML = `
     <div class="setup">

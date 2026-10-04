@@ -7,6 +7,7 @@
 
 import { BlobCache, DEFAULT_BLOB_CACHE_BYTES } from "../../../src/store/blob-cache.js";
 import { NoteQueries } from "./data.js";
+import type { HttpRelayResult, MainMessage } from "./rpc.js";
 import type { ProgressEvent, RpcRequest, WorkerMessage } from "./rpc.js";
 import { LocalStore, OPTION_DOCUMENT_SECRET, OPTION_SYNC_MAX_BLOB_CONTENT_SIZE, OPTION_SYNC_SERVER_HOST } from "../../../src/store/local-store.js";
 import { openSqliteWasmDatabase } from "../../../src/store/sqlite-wasm.js";
@@ -27,6 +28,75 @@ let peerInstanceId: string | null = null;
  */
 let session: SyncTransport | null = null;
 
+/**
+ * Whether HTTP must go through the native bridge.
+ *
+ * Set by {@link handle} when the main frame reports that a bridge exists. The worker cannot tell on
+ * its own: `triliumNative` is injected into the main frame, not into workers.
+ */
+let useNativeHttp = false;
+let relaySeq = 1;
+const relayPending = new Map<number, (result: HttpRelayResult) => void>();
+
+/**
+ * `fetch`, implemented as a request to the main frame.
+ *
+ * Shaped like the real thing so `SyncTransport` cannot tell the difference — it already accepts a
+ * `fetchImpl`, which is why this costs the protocol nothing.
+ */
+async function bridgeFetch(input: RequestInfo | URL, init: RequestInit = {}): Promise<Response> {
+  const url =
+    typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+  const method = (init.method ?? "GET").toUpperCase();
+
+  const headers: Record<string, string> = {};
+  new Headers(init.headers ?? {}).forEach((value, key) => {
+    headers[key] = value;
+  });
+
+  const bodyBase64 = init.body ? bytesToBase64(await bodyBytes(init.body)) : "";
+
+  const id = relaySeq++;
+  const result = await new Promise<HttpRelayResult>((resolve) => {
+    relayPending.set(id, resolve);
+    post({ event: "http", id, request: { url, method, headers, bodyBase64 } });
+  });
+
+  if (result.error && result.status === 0) throw new TypeError(result.error);
+
+  const bytes = base64ToBytes(result.bodyBase64);
+  const body = result.status === 204 || result.status === 304 ? null : bytes;
+
+  return new Response(body, {
+    status: result.status,
+    headers: new Headers(result.headers ?? {})
+  });
+}
+
+async function bodyBytes(body: BodyInit): Promise<Uint8Array> {
+  if (typeof body === "string") return new TextEncoder().encode(body);
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  return new TextEncoder().encode(String(body));
+}
+
+function bytesToBase64(bytes: Uint8Array): string {
+  let out = "";
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    out += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(out);
+}
+
+function base64ToBytes(base64: string): Uint8Array {
+  if (base64 === "") return new Uint8Array(0);
+  const binary = atob(base64);
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  return bytes;
+}
+
 async function ensureSession(): Promise<SyncTransport> {
   if (session) return session;
 
@@ -34,14 +104,20 @@ async function ensureSession(): Promise<SyncTransport> {
   const secret = store.getOption(OPTION_DOCUMENT_SECRET);
   if (!host || !secret) throw new Error("尚未配置服务端");
 
-  const probe = new SyncTransport({ serverHost: host, documentSecret: secret, syncVersion: 0 });
+  const probe = new SyncTransport({
+    serverHost: host,
+    documentSecret: secret,
+    syncVersion: 0,
+    ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
+  });
   const status = await probe.getSetupStatus();
 
   const transport = new SyncTransport({
     serverHost: host,
     documentSecret: secret,
     syncVersion: status.syncVersion,
-    maxBlobContentSize: maxBlobContentSize()
+    maxBlobContentSize: maxBlobContentSize(),
+    ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
   });
 
   await transport.login();
@@ -134,7 +210,12 @@ function ensureInbox(): string {
  * is also why TOTP cannot be enforced on the sync path at all.
  */
 async function configure(serverHost: string, password: string): Promise<void> {
-  const probe = new SyncTransport({ serverHost, documentSecret: "", syncVersion: 0 });
+  const probe = new SyncTransport({
+    serverHost,
+    documentSecret: "",
+    syncVersion: 0,
+    ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
+  });
   const status = await probe.getSetupStatus();
 
   if (!status.isInitialized) {
@@ -175,7 +256,8 @@ async function sync(): Promise<{
     // Read from the server rather than assumed: a mismatch is a hard 400 with no fallback, and the
     // released 0.106.0 reports 39 while `main` reports 40.
     syncVersion: 0,
-    maxBlobContentSize: maxBlobContentSize()
+    maxBlobContentSize: maxBlobContentSize(),
+    ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
   });
 
   const status = await transport.getSetupStatus();
@@ -309,6 +391,9 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     case "setMaxBlobContentSize":
       store.setOption(OPTION_SYNC_MAX_BLOB_CONTENT_SIZE, String(request.params[0]));
       return undefined;
+    case "useNativeHttp":
+      useNativeHttp = request.params[0];
+      return undefined;
     case "configure":
       return configure(request.params[0], request.params[1]);
     case "sync":
@@ -362,8 +447,18 @@ const ready: Promise<void> = boot().catch((error) => {
   throw error;
 });
 
-globalThis.addEventListener("message", async (event: MessageEvent<RpcRequest>) => {
-  const request = event.data;
+globalThis.addEventListener("message", async (event: MessageEvent<RpcRequest | MainMessage>) => {
+  const request = event.data as RpcRequest & MainMessage;
+
+  // A relay reply is not a request: it resolves the promise `bridgeFetch` is awaiting.
+  if ((request as MainMessage).event === "httpResult") {
+    const settle = relayPending.get(request.id);
+    if (settle) {
+      relayPending.delete(request.id);
+      settle(request.result);
+    }
+    return;
+  }
 
   try {
     await ready;
