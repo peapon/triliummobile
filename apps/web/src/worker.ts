@@ -224,6 +224,46 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return store.createTextNote(request.params[0]);
     case "inboxNoteId":
       return ensureInbox();
+    case "updateNoteContent":
+      store.updateNoteContent(request.params[0], request.params[1]);
+      return undefined;
+    case "loadInk": {
+      const noteId = request.params[0];
+      const attachment = store.findInkAttachment(noteId);
+      if (!attachment) return { attachmentId: null, doc: null };
+
+      return {
+        attachmentId: attachment.attachmentId,
+        doc: store.readAttachmentContent(attachment.attachmentId)
+      };
+    }
+    case "saveInk": {
+      const noteId = request.params[0];
+      const doc = request.params[1];
+      const existing = store.findInkAttachment(noteId);
+
+      if (existing) {
+        store.updateAttachmentContent(existing.attachmentId, doc);
+        return { attachmentId: existing.attachmentId };
+      }
+
+      const created = store.createAttachment({
+        ownerId: noteId,
+        role: "ink",
+        mime: "application/json",
+        title: "ink-main.json",
+        content: doc
+      });
+
+      // The note references its ink layer, so the placeholder travels with the note itself rather
+      // than being inferred from whichever attachments happen to exist (ADR D7).
+      const note = queries.getNote(noteId);
+      if (note && !note.content.includes("trilium-ink")) {
+        store.updateNoteContent(noteId, `${note.content}<div class="trilium-ink" data-ink-id="main"></div>`);
+      }
+
+      return { attachmentId: created.attachmentId };
+    }
     case "maxBlobContentSize":
       return maxBlobContentSize();
     case "setMaxBlobContentSize":

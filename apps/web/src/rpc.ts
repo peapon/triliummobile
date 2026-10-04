@@ -53,6 +53,11 @@ export interface AppApi {
   recent(limit?: number): Promise<NoteSummary[]>;
   createTextNote(options: { parentNoteId: string; title: string; content: string }): Promise<{ noteId: string }>;
   inboxNoteId(): Promise<string>;
+  /** Replace a note's HTML — the tablet's light-editing path. */
+  updateNoteContent(noteId: string, content: string): Promise<void>;
+  /** Read a note's ink layer, creating the attachment on first save. */
+  loadInk(noteId: string): Promise<{ attachmentId: string | null; doc: string | null }>;
+  saveInk(noteId: string, doc: string): Promise<{ attachmentId: string }>;
   maxBlobContentSize(): Promise<number>;
   setMaxBlobContentSize(value: number): Promise<void>;
   configure(serverHost: string, password: string): Promise<void>;
@@ -131,6 +136,9 @@ export class WorkerClient implements AppApi {
     this.call("createTextNote", options);
 
   inboxNoteId = () => this.call("inboxNoteId");
+  updateNoteContent = (noteId: string, content: string) => this.call("updateNoteContent", noteId, content);
+  loadInk = (noteId: string) => this.call("loadInk", noteId);
+  saveInk = (noteId: string, doc: string) => this.call("saveInk", noteId, doc);
   maxBlobContentSize = () => this.call("maxBlobContentSize");
   setMaxBlobContentSize = (value: number) => this.call("setMaxBlobContentSize", value);
   configure = (serverHost: string, password: string) => this.call("configure", serverHost, password);

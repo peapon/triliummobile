@@ -15,8 +15,10 @@ This README is the operator's view: what exists, how to run it, and what has act
 | Local replica (schema, journal, conflict bounce-back, tombstones) | **Done and verified** — full round-trip against a real server |
 | Offline capture (`createTextNote`) | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
 | Content-hash verification loop | **Done** — folds the journal sector by sector, with re-queue retry |
-| **Phone UI (capture / search / browse)** | **Working and browser-verified** — 12 E2E checks against a real server |
-| Pad UI (light editing + ink) | **Not started** |
+| **Phone UI (capture / search / browse)** | **Working and browser-verified** — 20 E2E checks against a real server |
+| **Pad UI (light editing + ink annotation/drawing)** | **Working and browser-verified** — edit and ink both reach the server |
+| On-demand blob fetch + LRU (large attachments) | **Not started** — blobs are stubbed above the cap, never fetched back |
+| ArkTS shell packaging the web core as a `.hap` | **Not started** — toolchain ready |
 | HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
 | HarmonyOS runtime behaviour (pen input, LAN fetch, storage quota) | **Awaiting a device** — probe written and building |
 

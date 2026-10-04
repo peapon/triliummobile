@@ -11,6 +11,7 @@
  */
 
 import { toSnippet, type NoteDetail, type NoteSummary } from "./data.js";
+import { InkCanvas, createInkDoc, paintInk, parseInkDoc, serializeInkDoc } from "./ink.js";
 import { WorkerClient, type AppCounts, type ProgressEvent } from "./rpc.js";
 import "./style.css";
 
@@ -30,6 +31,22 @@ interface AppState {
   lastMessage: string;
   lastOk: boolean;
   toast: { text: string; bad: boolean } | null;
+  /** Detail-view mode. Editing and ink are tablet features; the phone stays read-only by design. */
+  detailMode: DetailMode;
+  /** Set when the ink layer has unsaved strokes. */
+  inkDirty: boolean;
+  /** Set when the note currently has an ink attachment, so the layer must be drawn. */
+  hasInk: boolean;
+}
+
+type DetailMode = "view" | "edit" | "ink";
+
+/**
+ * Tablets get editing and ink; phones do not. That is a product decision, not a technical limit —
+ * the phone's job is 速记 / 速查 / 查看.
+ */
+function isPad(): boolean {
+  return window.matchMedia("(min-width: 720px)").matches;
 }
 
 const ROOT_NOTE_ID = "root";
@@ -47,8 +64,13 @@ const state: AppState = {
   progress: null,
   lastMessage: "",
   lastOk: true,
-  toast: null
+  toast: null,
+  detailMode: "view",
+  inkDirty: false,
+  hasInk: false
 };
+
+let inkCanvas: InkCanvas | null = null;
 
 const worker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 const api = new WorkerClient(worker);
@@ -95,6 +117,9 @@ async function refreshChrome(): Promise<void> {
 // -------------------------------------------------------------------- render
 
 async function render(): Promise<void> {
+  inkCanvas?.destroy();
+  inkCanvas = null;
+
   if (!state.configured) {
     renderSetup();
     return;
@@ -111,7 +136,24 @@ async function render(): Promise<void> {
     ${state.toast ? `<div class="toast ${state.toast.bad ? "bad" : ""}">${escapeHtml(state.toast.text)}</div>` : ""}
   `;
 
+  measureAppBar();
   wire();
+}
+
+/**
+ * Publish the global bar's height as a custom property.
+ *
+ * The tablet layout offsets the note panel below the bar, and the bar's height depends on the
+ * safe-area inset, which CSS alone cannot feed back into a sibling's `top`.
+ */
+function measureAppBar(): void {
+  const bar = document.querySelector(".appbar");
+  if (!bar) return;
+
+  const height = bar.getBoundingClientRect().height;
+  if (height > 0) {
+    document.documentElement.style.setProperty("--appbar-h", `${Math.round(height)}px`);
+  }
 }
 
 function renderAppbar(): string {
@@ -245,6 +287,9 @@ async function renderDetail(noteId: string): Promise<string> {
   const note = await api.getNote(noteId);
   if (!note) return "";
 
+  const ink = await api.loadInk(noteId);
+  state.hasInk = Boolean(ink.attachmentId);
+
   const labels = note.labels
     .filter((label) => !label.name.startsWith("_"))
     .slice(0, 12)
@@ -255,19 +300,71 @@ async function renderDetail(noteId: string): Promise<string> {
     ? `<div class="banner">这个附件超过同步上限，未下载到本地。在桌面端打开可查看完整内容。</div>`
     : "";
 
+  const renderable = note.type === "text" || note.type === "code";
+
+  // Editing is intentionally only offered for the note types this client can round-trip safely.
+  // A `book`, `canvas` or `render` note has structure this simple editor would destroy.
+  const desktop = isPad();
+  const toolbar = desktop && renderable ? renderDetailToolbar(note) : "";
+
+  const bodyClass = state.detailMode === "edit" ? "body editing" : "body";
+
+  const body =
+    state.detailMode === "edit"
+      ? `<div id="editor" class="editor" contenteditable="true" spellcheck="false">${sanitizeHtml(note.content)}</div>`
+      : `${stubbed}${renderContent(note)}`;
+
+  // In ink mode the content stops scrolling so the strokes stay aligned with what they annotate.
+  const inkLayer =
+    state.detailMode === "ink" || state.hasInk
+      ? `<canvas id="ink-layer" class="ink-layer${state.detailMode === "ink" ? " active" : ""}"></canvas>`
+      : "";
+
   return `
-    <div class="detail">
+    <div class="detail" data-mode="${state.detailMode}">
       <div class="appbar">
         <button id="detail-back" class="ghost" aria-label="返回">‹ 返回</button>
         <h1>${escapeHtml(note.title || "(无标题)")}</h1>
       </div>
-      <div class="body">
-        ${stubbed}
-        ${renderContent(note)}
+      ${toolbar}
+      <div class="${bodyClass}" id="detail-body">
+        ${body}
+        ${inkLayer}
       </div>
+      ${state.detailMode === "ink" ? renderInkToolbar() : ""}
       ${labels ? `<div class="label-chips">${labels}</div>` : ""}
     </div>
   `;
+}
+
+function renderDetailToolbar(note: NoteDetail): string {
+  const active = (mode: DetailMode) => (state.detailMode === mode ? " active" : "");
+  const inkLabel = state.inkDirty ? "笔迹 •" : "笔迹";
+
+  if (state.detailMode === "edit") {
+    return `<div class="detail-toolbar">
+      <button id="mode-save" class="primary">保存</button>
+      <button id="mode-cancel">取消</button>
+    </div>`;
+  }
+
+  return `<div class="detail-toolbar">
+    <button id="mode-edit" class="${active("edit").trim()}">编辑</button>
+    <button id="mode-ink" class="${active("ink").trim()}">${inkLabel}</button>
+  </div>`;
+}
+
+function renderInkToolbar(): string {
+  return `<div class="ink-toolbar">
+    <span class="ink-hint" id="ink-hint">用笔或手指书写</span>
+    <button data-ink-color="#e8eaed" class="swatch" style="--swatch:#e8eaed" aria-label="白色"></button>
+    <button data-ink-color="#ff6b6b" class="swatch" style="--swatch:#ff6b6b" aria-label="红色"></button>
+    <button data-ink-color="#3ddc84" class="swatch" style="--swatch:#3ddc84" aria-label="绿色"></button>
+    <button data-ink-color="#6ea8fe" class="swatch" style="--swatch:#6ea8fe" aria-label="蓝色"></button>
+    <button id="ink-undo">撤销</button>
+    <button id="ink-clear">清空</button>
+    <button id="ink-save" class="primary" ${state.inkDirty ? "" : "disabled"}>保存笔迹</button>
+  </div>`;
 }
 
 /**
@@ -317,8 +414,134 @@ function wire(): void {
 
   document.getElementById("detail-back")?.addEventListener("click", () => {
     state.openNoteId = null;
+    state.detailMode = "view";
     void render();
   });
+
+  if (state.openNoteId) void wireDetail(state.openNoteId);
+}
+
+/**
+ * Wire the note-detail view.
+ *
+ * The ink canvas is created here rather than in the markup because it has to measure its own box,
+ * which only exists once the markup is in the document.
+ */
+async function wireDetail(noteId: string): Promise<void> {
+  const canvas = document.getElementById("ink-layer") as HTMLCanvasElement | null;
+
+  if (canvas && state.detailMode === "ink") {
+    const stored = await api.loadInk(noteId);
+    const doc = stored.doc
+      ? parseInkDoc(stored.doc)
+      : createInkDoc(aspectOf(canvas));
+
+    inkCanvas = new InkCanvas(canvas, doc, {
+      color: currentInkColor,
+      width: currentInkWidth,
+      onChange: () => {
+        // Dirty only once there is something to save, so a stray tap does not offer an empty save.
+        state.inkDirty = (inkCanvas?.document.strokes.length ?? 0) > 0;
+        const save = document.getElementById("ink-save") as HTMLButtonElement | null;
+        if (save) save.disabled = !state.inkDirty;
+      }
+    });
+
+    requestAnimationFrame(() => {
+      inkCanvas?.resize();
+      updateInkHint();
+    });
+  } else if (canvas && state.hasInk) {
+    // Read-only display: the phone annotates nothing, but it must still show what a tablet drew.
+    const stored = await api.loadInk(noteId);
+    const doc = parseInkDoc(stored.doc);
+    requestAnimationFrame(() => paintInk(canvas, doc));
+  }
+
+  // ---------------------------------------------------------------- modes
+
+  document.getElementById("mode-edit")?.addEventListener("click", () => {
+    state.detailMode = "edit";
+    void render();
+  });
+
+  document.getElementById("mode-ink")?.addEventListener("click", () => {
+    state.detailMode = state.detailMode === "ink" ? "view" : "ink";
+    void render();
+  });
+
+  document.getElementById("mode-cancel")?.addEventListener("click", () => {
+    state.detailMode = "view";
+    void render();
+  });
+
+  document.getElementById("mode-save")?.addEventListener("click", async () => {
+    const editor = document.getElementById("editor");
+    if (!editor) return;
+
+    // The editor holds sanitised HTML, so what is saved is what the sanitiser produced — an edit
+    // can never introduce a script that the read path would then have to strip.
+    await api.updateNoteContent(noteId, editor.innerHTML);
+    state.detailMode = "view";
+    showToast("已保存", false);
+    // Refresh first: the status bar must say the change is owed to the server straight away, not
+    // only after the next unrelated action refreshes it.
+    await refreshChrome();
+    await render();
+  });
+
+  // --------------------------------------------------------------- ink tools
+
+  document.querySelectorAll<HTMLElement>("[data-ink-color]").forEach((swatch) => {
+    swatch.addEventListener("click", () => {
+      currentInkColor = swatch.dataset.inkColor ?? currentInkColor;
+      inkCanvas?.setStyle({ color: currentInkColor });
+    });
+  });
+
+  document.getElementById("ink-undo")?.addEventListener("click", () => {
+    inkCanvas?.undo();
+    state.inkDirty = (inkCanvas?.document.strokes.length ?? 0) > 0;
+    const save = document.getElementById("ink-save") as HTMLButtonElement | null;
+    if (save) save.disabled = !state.inkDirty;
+  });
+
+  document.getElementById("ink-clear")?.addEventListener("click", () => {
+    inkCanvas?.clear();
+    state.inkDirty = (inkCanvas?.document.strokes.length ?? 0) > 0;
+    const save = document.getElementById("ink-save") as HTMLButtonElement | null;
+    if (save) save.disabled = !state.inkDirty;
+  });
+
+  document.getElementById("ink-save")?.addEventListener("click", async () => {
+    if (!inkCanvas) return;
+
+    await api.saveInk(noteId, serializeInkDoc(inkCanvas.document));
+    state.inkDirty = false;
+    state.hasInk = true;
+    showToast("笔迹已保存，将随笔记同步", false);
+    await refreshChrome();
+    await render();
+  });
+}
+
+/** Remembered across notes, because a pen's colour is a property of the session, not the note. */
+let currentInkColor = "#e8eaed";
+const currentInkWidth = 0.004;
+
+function aspectOf(canvas: HTMLCanvasElement): number {
+  const rect = canvas.getBoundingClientRect();
+  return rect.height > 0 ? rect.width / rect.height : 1;
+}
+
+/** Tell the user whether a stylus is actually being recognised — the one thing docs cannot promise. */
+function updateInkHint(): void {
+  const hint = document.getElementById("ink-hint");
+  if (!hint || !inkCanvas) return;
+
+  hint.textContent = inkCanvas.sawPen
+    ? "已识别到手写笔"
+    : "用笔或手指书写";
 }
 
 function wireCapture(): void {

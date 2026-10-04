@@ -12,7 +12,12 @@
  * ambiguity upstream's own history has (see `../entities/hashes.ts`).
  */
 
-import { calculateBlobHash, generateEntityHash, toEntityRow } from "../entities/hashes.js";
+import {
+  calculateBlobHash,
+  generateEntityHash,
+  toEntityRow,
+  type EntityName
+} from "../entities/hashes.js";
 import { base64Decode, hashedBlobId } from "../crypto/index.js";
 import { randomString } from "../util/random.js";
 import type { SqlDatabase, SqlValue } from "./database.js";
@@ -407,11 +412,7 @@ export class LocalStore {
       this.replaceRow("notes", noteRow);
       this.replaceRow("branches", branchRow);
 
-      // The rows go through `toEntityRow` first, because upstream hashes *entity objects* — where
-      // `isProtected` is `!!row.isProtected`, i.e. a boolean — not the raw INTEGER 0/1 from SQLite.
-      // Hashing the raw row produces `"0"` where Trilium produces `"false"`, so the local change
-      // carries a hash no other peer agrees with. Sync still converges (hashes are carried, D3), but
-      // every later edit on another device reports a spurious content-hash mismatch.
+      // Blob hashing has its own formula, so it does not go through `recordLocalChange`.
       this.putEntityChange({
         entityName: "blobs",
         entityId: blobId,
@@ -420,25 +421,210 @@ export class LocalStore {
         utcDateChanged: utc,
         isSynced: 1
       });
-      this.putEntityChange({
-        entityName: "notes",
-        entityId: noteId,
-        hash: generateEntityHash("notes", toEntityRow("notes", noteRow)),
-        isErased: 0,
-        utcDateChanged: utc,
-        isSynced: 1
-      });
-      this.putEntityChange({
-        entityName: "branches",
-        entityId: branchId,
-        hash: generateEntityHash("branches", toEntityRow("branches", branchRow)),
-        isErased: 0,
-        utcDateChanged: utc,
-        isSynced: 1
-      });
+      this.recordLocalChange("notes", noteId, noteRow, utc);
+      this.recordLocalChange("branches", branchId, branchRow, utc);
     });
 
     return { noteId, branchId, blobId };
+  }
+
+  /**
+   * Replace a note's content — the "light editing" path the tablet needs, and also how an ink
+   * placeholder is appended to a note after its stroke file is written.
+   *
+   * Content is content-addressed: a new blob id is derived from the new HTML, so an unchanged save
+   * is a no-op on the wire and an edit that produces identical bytes costs nothing.
+   */
+  updateNoteContent(noteId: string, content: string, now: Date = new Date()): void {
+    const existing = this.db.get<{ blobId: string | null }>(
+      "SELECT blobId FROM notes WHERE noteId = ?",
+      [noteId]
+    );
+
+    if (!existing) throw new Error(`Cannot update content of unknown note ${noteId}`);
+
+    const utc = utcNowDateTime(now);
+    const local = localDateTime(now);
+    const blobId = hashedBlobId(content);
+
+    this.db.transaction(() => {
+      const blobRow = {
+        blobId,
+        content,
+        textRepresentation: null,
+        dateModified: local,
+        utcDateModified: utc
+      };
+
+      this.replaceRow("blobs", blobRow);
+      this.db.run(
+        "UPDATE notes SET blobId = ?, dateModified = ?, utcDateModified = ? WHERE noteId = ?",
+        [blobId, local, utc, noteId]
+      );
+
+      this.recordLocalChange("blobs", blobId, blobRow, utc);
+
+      const noteRow = this.db.get<Record<string, unknown>>("SELECT * FROM notes WHERE noteId = ?", [noteId]);
+      if (noteRow) this.recordLocalChange("notes", noteId, noteRow, utc);
+    });
+  }
+
+  /**
+   * Create an attachment owned by a note — where ink stroke files live (see ADR D7).
+   *
+   * Attachments are ordinary synced entities: a blob holds the bytes and the attachment row binds it
+   * to its owner, so an ink file reaches every other device through the same journal as everything
+   * else, with no side channel.
+   */
+  createAttachment(options: {
+    ownerId: string;
+    role: string;
+    mime: string;
+    title: string;
+    content: string;
+    now?: Date;
+  }): { attachmentId: string; blobId: string } {
+    const now = options.now ?? new Date();
+    const utc = utcNowDateTime(now);
+    const local = localDateTime(now);
+
+    const attachmentId = randomString(12);
+    const blobId = hashedBlobId(options.content);
+
+    const blobRow = {
+      blobId,
+      content: options.content,
+      textRepresentation: null,
+      dateModified: local,
+      utcDateModified: utc
+    };
+
+    const attachmentRow = {
+      attachmentId,
+      ownerId: options.ownerId,
+      role: options.role,
+      mime: options.mime,
+      title: options.title,
+      isProtected: 0,
+      position: this.nextAttachmentPosition(options.ownerId),
+      blobId,
+      dateModified: local,
+      utcDateModified: utc,
+      utcDateScheduledForErasureSince: null,
+      isDeleted: 0,
+      deleteId: null
+    };
+
+    this.db.transaction(() => {
+      this.replaceRow("blobs", blobRow);
+      this.replaceRow("attachments", attachmentRow);
+      this.recordLocalChange("blobs", blobId, blobRow, utc);
+      this.recordLocalChange("attachments", attachmentId, attachmentRow, utc);
+    });
+
+    return { attachmentId, blobId };
+  }
+
+  /**
+   * Replace an attachment's content.
+   *
+   * An ink layer is rewritten on every save, and because blobs are content-addressed each save also
+   * produces a new blob; the old one becomes unreferenced and the server's own sweep collects it.
+   */
+  updateAttachmentContent(attachmentId: string, content: string, now: Date = new Date()): void {
+    const existing = this.db.get<{ ownerId: string }>(
+      "SELECT ownerId FROM attachments WHERE attachmentId = ?",
+      [attachmentId]
+    );
+
+    if (!existing) throw new Error(`Cannot update content of unknown attachment ${attachmentId}`);
+
+    const utc = utcNowDateTime(now);
+    const local = localDateTime(now);
+    const blobId = hashedBlobId(content);
+
+    this.db.transaction(() => {
+      const blobRow = {
+        blobId,
+        content,
+        textRepresentation: null,
+        dateModified: local,
+        utcDateModified: utc
+      };
+
+      this.replaceRow("blobs", blobRow);
+      this.db.run(
+        "UPDATE attachments SET blobId = ?, dateModified = ?, utcDateModified = ? WHERE attachmentId = ?",
+        [blobId, local, utc, attachmentId]
+      );
+
+      this.recordLocalChange("blobs", blobId, blobRow, utc);
+
+      const attachmentRow = this.db.get<Record<string, unknown>>(
+        "SELECT * FROM attachments WHERE attachmentId = ?",
+        [attachmentId]
+      );
+      if (attachmentRow) this.recordLocalChange("attachments", attachmentId, attachmentRow, utc);
+    });
+  }
+
+  /** A note's ink layer, identified by the conventional title. */
+  findInkAttachment(noteId: string): { attachmentId: string; title: string } | null {
+    const row = this.db.get<{ attachmentId: string; title: string }>(
+      `SELECT attachmentId, title FROM attachments
+        WHERE ownerId = ? AND role = 'ink' AND isDeleted = 0
+        ORDER BY position LIMIT 1`,
+      [noteId]
+    );
+    return row ?? null;
+  }
+
+  /** Attachments owned by a note, newest last. Used to find a note's ink file. */
+  listAttachments(ownerId: string): Array<{ attachmentId: string; role: string; title: string; mime: string; blobId: string | null }> {
+    return this.db.all(
+      `SELECT attachmentId, role, title, mime, blobId FROM attachments
+        WHERE ownerId = ? AND isDeleted = 0 ORDER BY position`,
+      [ownerId]
+    );
+  }
+
+  /** Decoded text content of an attachment, for reading a stroke file back. */
+  readAttachmentContent(attachmentId: string): string | null {
+    const row = this.db.get<{ content: unknown }>(
+      `SELECT b.content FROM attachments a JOIN blobs b ON b.blobId = a.blobId
+        WHERE a.attachmentId = ?`,
+      [attachmentId]
+    );
+
+    if (!row) return null;
+    if (typeof row.content === "string") return row.content;
+    if (row.content instanceof Uint8Array) return new TextDecoder().decode(row.content);
+    return null;
+  }
+
+  /**
+   * Record a change this client originated.
+   *
+   * The row is normalised before hashing: upstream hashes *entity objects* (`isProtected` as a
+   * boolean), so hashing the raw SQLite row would produce a hash no peer agrees with.
+   */
+  private recordLocalChange(entityName: EntityName, entityId: string, row: Record<string, unknown>, utc: string): void {
+    this.putEntityChange({
+      entityName,
+      entityId,
+      hash: generateEntityHash(entityName, toEntityRow(entityName, row)),
+      isErased: 0,
+      utcDateChanged: utc,
+      isSynced: 1
+    });
+  }
+
+  private nextAttachmentPosition(ownerId: string): number {
+    const row = this.db.get<{ maxPosition: number | null }>(
+      "SELECT MAX(position) AS maxPosition FROM attachments WHERE ownerId = ? AND isDeleted = 0",
+      [ownerId]
+    );
+    return (row?.maxPosition ?? 0) + 10;
   }
 
   /** Positions are spaced by 10 upstream, so a note can always be slotted between two others. */

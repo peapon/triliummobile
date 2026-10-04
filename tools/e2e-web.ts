@@ -59,6 +59,28 @@ const ANY_SETTLED = /同步完成|项待同步|不一致|失败/;
 /** After pressing sync, only a completed round counts. */
 const SYNC_SETTLED = /同步完成|不一致|失败/;
 
+/**
+ * Poll until the server's own database satisfies `predicate`.
+ *
+ * Asserting on the UI instead is fragile in a way that hides real failures: the status line from a
+ * *previous* sync already reads "同步完成", so a wait for that text returns before the sync the test
+ * is waiting on has even started. The server file is the authority anyway.
+ */
+async function waitForServer(predicate: () => boolean, timeoutMs = 30_000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    try {
+      if (predicate()) return true;
+    } catch {
+      // The file may be mid-write; keep polling.
+    }
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+
+  return predicate();
+}
+
 function check(label: string, ok: boolean, detail = ""): void {
   const mark = ok ? "  ok  " : " FAIL ";
   console.log(`[${mark}] ${label}${detail ? ` — ${detail}` : ""}`);
@@ -71,6 +93,32 @@ function serverNoteCount(): number {
   const row = db.prepare("SELECT COUNT(*) AS c FROM notes WHERE isDeleted = 0").get() as { c: number };
   db.close();
   return row.c;
+}
+
+/** Does the given note's stored content contain this marker? Proves an edit actually landed. */
+function serverNoteContains(noteId: string, needle: string): boolean {
+  const db = new DatabaseSync(SERVER_DB, { readOnly: true });
+  const row = db
+    .prepare(
+      `SELECT CAST(b.content AS TEXT) AS content
+         FROM notes n JOIN blobs b ON b.blobId = n.blobId
+        WHERE n.noteId = ?`
+    )
+    .get(noteId) as { content: string | null } | undefined;
+  db.close();
+
+  return Boolean(row?.content?.includes(needle));
+}
+
+/** The ink layer is a synced attachment, so the server's own file is the evidence that it saved. */
+function serverInkAttachmentTitles(noteId: string): string[] {
+  const db = new DatabaseSync(SERVER_DB, { readOnly: true });
+  const rows = db
+    .prepare("SELECT title FROM attachments WHERE ownerId = ? AND role = 'ink' AND isDeleted = 0")
+    .all(noteId) as Array<{ title: string }>;
+  db.close();
+
+  return rows.map((row) => row.title);
 }
 
 function serverHasTitle(title: string): boolean {
@@ -220,7 +268,127 @@ async function main(): Promise<void> {
     );
     check("no uncaught console errors", realErrors.length === 0, realErrors.slice(0, 3).join(" | "));
 
-    console.log("\nScreenshots: /tmp/triliummobile-{1-capture,2-search,3-browse}.png");
+    // ------------------------------------------------------ tablet: edit and ink
+
+    // The phone build offers neither by design, so the viewport switches to a tablet's.
+    await page.setViewportSize({ width: 1024, height: 768 });
+
+    // Open the note captured above rather than whatever the tree happens to list first: the
+    // toolbar is offered only for the types this editor can round-trip, and root's first child is a
+    // `book`, which would make this section test nothing.
+    await page.click('[data-tab="search"]');
+    await page.waitForSelector("#search-input");
+    await page.fill("#search-input", title);
+    await page.waitForTimeout(600);
+
+    const targetRow = page.locator(".row").first();
+    const targetNoteId = await targetRow.getAttribute("data-note-id");
+
+    if (!targetNoteId) {
+      check("the captured note is available to edit", false);
+    } else {
+      await targetRow.click();
+      await page.waitForSelector(".detail");
+      check("tablet shows the editing toolbar", (await page.locator("#mode-edit").count()) === 1);
+
+      // ---------------------------------------------------------------- editing
+
+      await page.click("#mode-edit");
+      await page.waitForSelector("#editor");
+
+      const marker = `e2e-edit-${Date.now()}`;
+      await page.evaluate((value: string) => {
+        document.getElementById("editor")!.innerHTML = `<p>${value}</p>`;
+      }, marker);
+      await page.click("#mode-save");
+      await page.waitForTimeout(1000);
+
+      // The edit is deliberately local-first: it must be visible immediately and owed to the
+      // server, not blocked on a round trip.
+      check(
+        "an edit is visible locally before any sync",
+        ((await page.textContent(".detail .body")) ?? "").includes(marker)
+      );
+      check(
+        "the edit is still owed to the server",
+        /待同步/.test((await page.textContent("#status")) ?? "")
+      );
+
+      // ------------------------------------------------------------------- ink
+
+      await page.click("#mode-ink");
+      await page.waitForSelector("#ink-layer.active", { timeout: 15_000 });
+
+      const box = await page.locator("#ink-layer").boundingBox();
+      if (!box) {
+        check("the ink canvas has a drawable box", false);
+      } else {
+        // A mouse is a pointer too, so this drives the same code path a stylus would; `pointerType`
+        // is the only difference and the app records it per stroke.
+        await page.mouse.move(box.x + 40, box.y + 40);
+        await page.mouse.down();
+        for (let step = 1; step <= 12; step++) {
+          await page.mouse.move(box.x + 40 + step * 12, box.y + 40 + Math.sin(step) * 20);
+        }
+        await page.mouse.up();
+        await page.waitForTimeout(300);
+
+        const saveDisabled = await page.locator("#ink-save").isDisabled();
+        check("drawing a stroke enables the ink save button", !saveDisabled);
+
+        await page.click("#ink-save");
+        await page.waitForTimeout(1000);
+
+        // Still local at this point — the round trip below is what carries both the edit and the
+        // ink to the server, which is the whole offline-first contract.
+      }
+
+      await page.screenshot({ path: "/tmp/triliummobile-4-pad-ink.png" });
+
+      // ------------------------------------------------- one sync carries both changes
+
+      await page.click("#sync");
+
+      const editArrived = await waitForServer(() => serverNoteContains(targetNoteId, marker));
+      check("the tablet edit reached the server on the next sync", editArrived, `marker=${marker}`);
+
+      const inkArrived = await waitForServer(() => serverInkAttachmentTitles(targetNoteId).length > 0);
+      check(
+        "the ink layer reached the server as an attachment",
+        inkArrived,
+        serverInkAttachmentTitles(targetNoteId).join(", ") || "(none)"
+      );
+
+      // ------------------------------------------------------- ink survives reload
+
+      await page.reload({ waitUntil: "domcontentloaded" });
+      await page.waitForSelector(".tabbar", { timeout: 60_000 });
+
+      // Find it by search rather than by position: the edit bumped its timestamp, so it has moved
+      // to the top of the recency list and may not sit under the same parent row as before.
+      await page.click('[data-tab="search"]');
+      await page.waitForSelector("#search-input");
+      await page.fill("#search-input", marker);
+      await page.waitForTimeout(600);
+
+      const reopened = page.locator(`[data-note-id="${targetNoteId}"]`).first();
+      if ((await reopened.count()) === 0) {
+        check("the edited note is findable after a reload", false);
+      } else {
+        await reopened.click();
+        await page.waitForSelector(".detail");
+        check(
+          "ink is still present after a reload, loaded from the local replica",
+          (await page.locator("#ink-layer").count()) === 1
+        );
+        check(
+          "the edit persisted across a reload",
+          ((await page.textContent(".detail .body")) ?? "").includes(marker)
+        );
+      }
+    }
+
+    console.log("\nScreenshots: /tmp/triliummobile-{1-capture,2-search,3-browse,4-pad-ink}.png");
   } finally {
     await browser?.close();
     if (existsSync(profile)) rmSync(profile, { recursive: true, force: true });
