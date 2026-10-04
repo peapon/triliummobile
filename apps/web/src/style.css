@@ -626,6 +626,39 @@ textarea:focus {
   gap: var(--space-4);
 }
 
+/* The brand mark, at the size it was drawn to be seen: it carries the screen's identity on the one
+   page a new user meets before any content exists. */
+.brand-mark {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--elev-2);
+}
+
+.boot-mark {
+  display: flex;
+  justify-content: center;
+  padding: var(--space-8) 0 var(--space-4);
+}
+
+.boot-mark img {
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-md);
+  opacity: 0.9;
+  animation: boot-pulse 1.8s var(--ease-in-out) infinite;
+}
+
+@keyframes boot-pulse {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
 .setup h2 {
   margin: 0;
   font-size: var(--text-lg);

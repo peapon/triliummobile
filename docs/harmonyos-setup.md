@@ -113,7 +113,7 @@ Apple Silicon 需要 macOS 授予 DevEco **Hypervisor** 权限。
 ```bash
 export DEVECO_SDK_HOME=<HarmonyOS SDK 路径>
 hdc install entry/build/default/outputs/default/entry-default-signed.hap
-hdc shell aa start -a EntryAbility -b org.triliumnotes.mobile.probe
+hdc shell aa start -a EntryAbility -b org.triliumnotes.mobile
 ```
 
 （该 `.hap` 需要先用你的证书签名 —— `build.sh` 目前只产出 unsigned 包。）

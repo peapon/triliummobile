@@ -112,7 +112,7 @@ HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/
 "$HDC" list targets                          # -> 127.0.0.1:5555
 
 "$HDC" install -r entry/build/default/outputs/default/entry-default-unsigned.hap
-"$HDC" shell aa start -a EntryAbility -b org.triliumnotes.mobile.probe
+"$HDC" shell aa start -a EntryAbility -b org.triliumnotes.mobile
 ```
 
 **未签名的 HAP 可以直接装到模拟器上** —— 真机才需要设备绑定的调试证书。

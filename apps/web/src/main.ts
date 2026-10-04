@@ -406,6 +406,7 @@ async function autoConfigureForTest(): Promise<void> {
 function renderBootSkeleton(): void {
   app.innerHTML = `
     <div class="appbar"><h1>TriliumMobile</h1><span class="status">正在打开本地数据库…</span></div>
+    <div class="boot-mark"><img src="/icon-192.png" alt="" width="56" height="56" /></div>
     <div class="view">
       ${Array.from({ length: 5 }, () => `
         <div class="skeleton" style="padding:16px;margin-bottom:8px">
@@ -1080,6 +1081,7 @@ async function renderSetup(error?: string): Promise<void> {
 
   commit(`
     <div class="setup">
+      <img class="brand-mark" src="/icon-192.png" alt="" width="72" height="72" />
       <h2>连接 Trilium 服务端</h2>
       <p>
         填入你自建服务端的地址与密码。密码只用于读取同步密钥，之后同步走的是

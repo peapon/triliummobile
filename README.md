@@ -206,6 +206,15 @@ worker. `Buffer` slipped in once and every Node test passed because Node has it;
 **The database must be opened from a Worker, not the page.** The OPFS SAH-Pool VFS needs
 `createSyncAccessHandle`, which browsers only expose to workers.
 
+## Branding
+
+The Trilium name and logo are used with provenance recorded in
+[assets/branding/ATTRIBUTION.md](assets/branding/ATTRIBUTION.md). They come from
+[TriliumNext/Trilium](https://github.com/TriliumNext/Trilium), which is AGPL-3.0-only like this
+project. Note that AGPL-3.0 §5(e) withholds any trademark grant: using the mark for a client pointed
+at your own server is ordinary nominative use, but distributing a build under the Trilium name would
+imply endorsement by the upstream project.
+
 ## License
 
 AGPL-3.0-only. Trilium, TriliumDroid and pocket-trilium are all AGPL-3.0; this client ports protocol
