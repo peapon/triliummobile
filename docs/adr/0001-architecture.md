@@ -49,6 +49,25 @@ touch-native, and available on HarmonyOS**.
 
 ### D1 — A web core in thin, hand-written native shells. Not a cross-platform UI framework.
 
+**Built, and running on a HarmonyOS emulator.** The ArkTS shell is ~180 lines: a `Web` component, a
+request interceptor, and a JS bridge. Three mechanisms in it were each forced by a measurement:
+
+1. **The page is served from `https://localhost`, not `resource://rawfile`.** A rawfile page reports
+   origin `null`, and on the device both `new Worker(...)` and `navigator.storage.getDirectory()`
+   throw `SecurityError` there — no workers, no OPFS. The client needs both: the OPFS SAH-Pool VFS is
+   worker-only (D5) and the replica lives in OPFS. `onInterceptRequest` answers static requests from
+   the package, which yields a real origin with no local server to run.
+2. **The API goes through a `javaScriptProxy` bridge, not the interceptor.** `onInterceptRequest` is
+   synchronous — its callback returns a `WebResourceResponse`, not a promise — so it cannot perform a
+   network round trip. That also happens to be the only way past D9's same-origin problem.
+3. **The worker relays its HTTP through the main frame.** The bridge is injected into the main frame;
+   the sync engine must live in the worker that owns the database. `SyncTransport` already took a
+   `fetchImpl`, so the relay cost the protocol nothing — not one line changed.
+
+Packaged by `apps/harmony-probe/package-app.sh`, 1.47 MB. Verified end to end on the device: a full
+pull of 2,909 entities, and a note captured offline on the emulator confirmed by reading the server's
+own database.
+
 The UI is HTML/CSS/JS running in a WebView; each platform gets a minimal shell.
 
 - HarmonyOS: a hand-written **ArkTS shell** — one `Web` component plus a `javaScriptProxy` bridge
