@@ -141,17 +141,37 @@ function normalizeRow(entityName: EntityName, raw: EntityRow, dropNullableKeys: 
 }
 
 /**
- * `blobService.calculateContentHash()` — note this is un-prefixed, un-truncated, computed over the
- * **stored** content (ciphertext for protected blobs), and includes `textRepresentation` only when
- * it is non-empty.
+ * `blobService.calculateContentHash()` — un-prefixed, un-truncated, computed over the **stored**
+ * content (ciphertext for protected blobs), including `textRepresentation` only when non-empty.
+ *
+ * The one subtlety is binary content. Upstream writes `content.toString()` where `content` is
+ * whatever the driver hands back, and `better-sqlite3` returns a `Buffer` for a BLOB column — so the
+ * hash is taken over the **UTF-8 decoding** of the bytes, replacement characters and all, not over
+ * the bytes themselves. `Uint8Array.prototype.toString()` is not that: it produces `"37,80,68,70"`.
+ * Reproducing the driver's coercion is the whole job of this function.
  */
 export function calculateBlobHash(blob: {
   blobId: string;
-  content: string | null | undefined;
+  content: string | Uint8Array | null | undefined;
   textRepresentation?: string | null;
 }): string {
   const textRepresentationSegment = blob.textRepresentation ? `|${blob.textRepresentation}` : "";
-  return trilogyHash(`${blob.blobId}|${(blob.content ?? "").toString()}${textRepresentationSegment}`);
+  return trilogyHash(
+    `${blob.blobId}|${coerceBlobContent(blob.content)}${textRepresentationSegment}`
+  );
+}
+
+/**
+ * Match `Buffer.prototype.toString()` on the stored content, which is what upstream hashes.
+ *
+ * A binary blob's bytes are decoded as UTF-8; this is lossy by construction, and deliberately so —
+ * the goal is to reproduce the reference implementation, not to improve on it.
+ */
+function coerceBlobContent(content: string | Uint8Array | null | undefined): string {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  if (content instanceof Uint8Array) return new TextDecoder().decode(content);
+  return String(content);
 }
 
 /**

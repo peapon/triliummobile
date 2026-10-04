@@ -8,38 +8,72 @@
  * here exactly, and `crypto.spec.ts` cross-checks every primitive against `node:crypto`.
  */
 
-/** Encode a JS string to UTF-8 bytes, with lone surrogates replaced (WHATWG behaviour). */
+/**
+ * Encode a JS string to UTF-8 bytes, matching `Buffer.from(str, "utf8")`.
+ *
+ * Two passes rather than one growable array: a blob's UTF-8 form can be hundreds of megabytes, and
+ * an intermediate `number[]` costs eight bytes per element. That representation is not merely slow —
+ * it throws `RangeError: Invalid array length` on a large attachment.
+ *
+ * Lone surrogates become U+FFFD, which is what the WHATWG encoder and Node both do. Emitting the
+ * surrogate's code point directly would produce bytes no other implementation agrees with, and the
+ * blob id and every entity hash are derived from these bytes.
+ */
 export function utf8Encode(str: string): Uint8Array {
-  const out: number[] = [];
+  let length = 0;
+
+  for (let i = 0; i < str.length; i++) {
+    const code = str.charCodeAt(i);
+
+    if (code < 0x80) {
+      length += 1;
+    } else if (code < 0x800) {
+      length += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(str.charCodeAt(i + 1))) {
+      length += 4;
+      i++;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      length += 3; // a lone surrogate, written as U+FFFD
+    } else {
+      length += 3;
+    }
+  }
+
+  const out = new Uint8Array(length);
+  let at = 0;
 
   for (let i = 0; i < str.length; i++) {
     let code = str.charCodeAt(i);
 
-    if (code >= 0xd800 && code <= 0xdbff && i + 1 < str.length) {
-      const next = str.charCodeAt(i + 1);
-      if (next >= 0xdc00 && next <= 0xdfff) {
-        code = 0x10000 + ((code - 0xd800) << 10) + (next - 0xdc00);
-        i++;
-      }
+    if (code >= 0xd800 && code <= 0xdbff && isLowSurrogate(str.charCodeAt(i + 1))) {
+      code = 0x10000 + ((code - 0xd800) << 10) + (str.charCodeAt(i + 1) - 0xdc00);
+      i++;
+    } else if (code >= 0xd800 && code <= 0xdfff) {
+      code = 0xfffd;
     }
 
     if (code < 0x80) {
-      out.push(code);
+      out[at++] = code;
     } else if (code < 0x800) {
-      out.push(0xc0 | (code >> 6), 0x80 | (code & 0x3f));
+      out[at++] = 0xc0 | (code >> 6);
+      out[at++] = 0x80 | (code & 0x3f);
     } else if (code < 0x10000) {
-      out.push(0xe0 | (code >> 12), 0x80 | ((code >> 6) & 0x3f), 0x80 | (code & 0x3f));
+      out[at++] = 0xe0 | (code >> 12);
+      out[at++] = 0x80 | ((code >> 6) & 0x3f);
+      out[at++] = 0x80 | (code & 0x3f);
     } else {
-      out.push(
-        0xf0 | (code >> 18),
-        0x80 | ((code >> 12) & 0x3f),
-        0x80 | ((code >> 6) & 0x3f),
-        0x80 | (code & 0x3f)
-      );
+      out[at++] = 0xf0 | (code >> 18);
+      out[at++] = 0x80 | ((code >> 12) & 0x3f);
+      out[at++] = 0x80 | ((code >> 6) & 0x3f);
+      out[at++] = 0x80 | (code & 0x3f);
     }
   }
 
-  return Uint8Array.from(out);
+  return out;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
 }
 
 /**

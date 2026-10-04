@@ -60,6 +60,19 @@ export interface AppApi {
   saveInk(noteId: string, doc: string): Promise<{ attachmentId: string }>;
   maxBlobContentSize(): Promise<number>;
   setMaxBlobContentSize(value: number): Promise<void>;
+  /**
+   * Fetch a stubbed note's content on demand. Returns whether anything was downloaded.
+   */
+  fetchNoteBlob(noteId: string): Promise<{ fetched: boolean; stubbed: boolean; bytes: number; error?: string }>;
+  /** Attachments owned by a note, with a flag for ones this device has not downloaded. */
+  listAttachments(
+    noteId: string
+  ): Promise<Array<{ attachmentId: string; role: string; title: string; mime: string; stubbed: boolean }>>;
+  fetchAttachmentBlob(
+    attachmentId: string
+  ): Promise<{ fetched: boolean; stubbed: boolean; bytes: number; error?: string }>;
+  cacheStats(): Promise<{ entries: number; bytes: number; stubbed: number; budget: number }>;
+  setBlobBudget(bytes: number): Promise<void>;
   configure(serverHost: string, password: string): Promise<void>;
   sync(): Promise<SyncSummary>;
   pendingPushCount(): Promise<number>;
@@ -141,6 +154,11 @@ export class WorkerClient implements AppApi {
   saveInk = (noteId: string, doc: string) => this.call("saveInk", noteId, doc);
   maxBlobContentSize = () => this.call("maxBlobContentSize");
   setMaxBlobContentSize = (value: number) => this.call("setMaxBlobContentSize", value);
+  fetchNoteBlob = (noteId: string) => this.call("fetchNoteBlob", noteId);
+  listAttachments = (noteId: string) => this.call("listAttachments", noteId);
+  fetchAttachmentBlob = (attachmentId: string) => this.call("fetchAttachmentBlob", attachmentId);
+  cacheStats = () => this.call("cacheStats");
+  setBlobBudget = (bytes: number) => this.call("setBlobBudget", bytes);
   configure = (serverHost: string, password: string) => this.call("configure", serverHost, password);
   sync = () => this.call("sync");
   pendingPushCount = () => this.call("pendingPushCount");

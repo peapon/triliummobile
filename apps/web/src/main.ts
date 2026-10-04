@@ -296,9 +296,38 @@ async function renderDetail(noteId: string): Promise<string> {
     .map((label) => `<span class="chip">${escapeHtml(label.value ? `${label.name}=${label.value}` : label.name)}</span>`)
     .join("");
 
+  const attachments = await api.listAttachments(noteId);
+  const stubbedAttachments = attachments.filter((attachment) => attachment.stubbed);
+  const undownloaded = note.contentStubbed ? 1 + stubbedAttachments.length : stubbedAttachments.length;
+
+  // Attachments are stubbed above the sync cap, which for a real vault is most of the bytes. Saying
+  // so, and offering the download, is the difference between "empty note" and "not fetched yet".
   const stubbed = note.contentStubbed
-    ? `<div class="banner">这个附件超过同步上限，未下载到本地。在桌面端打开可查看完整内容。</div>`
+    ? `<div class="banner">
+         <span>正文超过同步上限，尚未下载到本机。</span>
+         <button id="fetch-note-blob">下载正文</button>
+       </div>`
     : "";
+
+  const attachmentList =
+    attachments.length > 0
+      ? `<div class="attachments">
+           ${attachments
+             .map(
+               (attachment) => `
+             <div class="attachment">
+               <span class="attachment-title">${escapeHtml(attachment.title)}</span>
+               <span class="attachment-meta">${escapeHtml(attachment.mime || attachment.role)}</span>
+               ${
+                 attachment.stubbed
+                   ? `<button data-fetch-attachment="${attachment.attachmentId}">下载</button>`
+                   : `<span class="attachment-meta">已缓存</span>`
+               }
+             </div>`
+             )
+             .join("")}
+         </div>`
+      : "";
 
   const renderable = note.type === "text" || note.type === "code";
 
@@ -333,6 +362,12 @@ async function renderDetail(noteId: string): Promise<string> {
       </div>
       ${state.detailMode === "ink" ? renderInkToolbar() : ""}
       ${labels ? `<div class="label-chips">${labels}</div>` : ""}
+      ${attachmentList}
+      ${
+        undownloaded > 0 && state.detailMode !== "ink"
+          ? `<div class="cache-note">本机还有 ${undownloaded} 项内容未下载</div>`
+          : ""
+      }
     </div>
   `;
 }
@@ -488,6 +523,42 @@ async function wireDetail(noteId: string): Promise<void> {
     // only after the next unrelated action refreshes it.
     await refreshChrome();
     await render();
+  });
+
+  // ------------------------------------------------------- on-demand downloads
+
+  document.getElementById("fetch-note-blob")?.addEventListener("click", async (event) => {
+    const button = event.currentTarget as HTMLButtonElement;
+    button.disabled = true;
+    button.textContent = "下载中…";
+
+    const result = await api.fetchNoteBlob(noteId);
+
+    if (result.fetched) {
+      showToast(`已下载 ${(result.bytes / 1024).toFixed(0)} KB`, false);
+    } else {
+      showToast(result.error ?? "下载失败", true);
+    }
+
+    await render();
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-fetch-attachment]").forEach((button) => {
+    button.addEventListener("click", async () => {
+      const attachmentId = button.dataset.fetchAttachment;
+      if (!attachmentId) return;
+
+      button.textContent = "下载中…";
+      const result = await api.fetchAttachmentBlob(attachmentId);
+
+      if (result.fetched) {
+        showToast(`已下载 ${(result.bytes / 1024).toFixed(0)} KB`, false);
+      } else {
+        showToast(result.error ?? "下载失败", true);
+      }
+
+      await render();
+    });
   });
 
   // --------------------------------------------------------------- ink tools

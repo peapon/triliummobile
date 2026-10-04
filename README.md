@@ -20,7 +20,8 @@ This README is the operator's view: what exists, how to run it, and what has act
 | On-demand blob fetch + LRU (large attachments) | **Not started** — blobs are stubbed above the cap, never fetched back |
 | ArkTS shell packaging the web core as a `.hap` | **Not started** — toolchain ready |
 | HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
-| HarmonyOS runtime behaviour (pen input, LAN fetch, storage quota) | **Awaiting a device** — probe written and building |
+| HarmonyOS runtime behaviour | **Measured on a real API 26 emulator** — see [docs/harmonyos-verified.md](docs/harmonyos-verified.md) |
+| Stylus `pointerType === "pen"` | **Still unproven** — needs a physical device with a stylus |
 
 ## What the round-trip proves
 

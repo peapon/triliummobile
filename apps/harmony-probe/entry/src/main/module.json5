@@ -4,7 +4,7 @@
     "type": "entry",
     "description": "$string:module_desc",
     "mainElement": "EntryAbility",
-    "deviceTypes": ["default", "tablet"],
+    "deviceTypes": ["phone", "tablet"],
     "deliveryWithInstall": true,
     "installationFree": false,
     "pages": "$profile:main_pages",
@@ -26,6 +26,7 @@
         ]
       }
     ],
+    // ArkWeb needs an explicit opt-in to reach a private-network address; see the probe page.
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET",

@@ -31,8 +31,8 @@ import {
 /** `/api/sync/changed` refuses to exceed ~8 MiB per response; the client asks for a smaller page. */
 export const DEFAULT_MAX_BLOB_CONTENT_SIZE = 4 * 1024 * 1024;
 
-/** Upstream splits a push body into 1 MiB pages. */
-export const DEFAULT_PUSH_PAGE_SIZE = 1024 * 1024;
+/** Upstream splits a push body into 1,000,000-character pages (`sync.ts` `PAGE_SIZE`). */
+export const DEFAULT_PUSH_PAGE_SIZE = 1_000_000;
 
 export interface TransportOptions {
   /** Base URL of the Trilium server, e.g. `http://192.168.1.10:8080`. */
@@ -63,6 +63,19 @@ export function randomString(length: number): string {
 
 function normaliseHost(host: string): string {
   return host.replace(/\/+$/, "");
+}
+
+/** Shape of `GET /api/{notes,attachments}/{id}/blob`. */
+export interface BlobPayload {
+  blobId: string;
+  /** Present only for string content; `null` for images, files and other binary. */
+  content: string | null;
+  contentLength: number;
+  textRepresentation?: string | null;
+  dateModified?: string;
+  utcDateModified?: string;
+  /** Server-side verdict: empty content whose blobId is not the hash of empty content. */
+  isStubbed: boolean;
 }
 
 export class SyncTransport {
@@ -225,7 +238,17 @@ export class SyncTransport {
    * `PUT /api/sync/update` — push a batch.
    *
    * Bodies are split into pages because a first push can comfortably exceed reverse-proxy body
-   * limits. A single page still sends `pageCount: 1`; the server treats that as the non-paged case.
+   * limits. Three details of that paging are load-bearing, and all three were established by reading
+   * upstream's `request_provider` rather than by guessing:
+   *
+   * 1. **A paged body is sent as `text/plain`, not `application/json`.** The server buffers pages by
+   *    concatenating `req.body` as a *string* and only parses on the last one. With a JSON content
+   *    type the body parser consumes page 1 into an object and the concatenation produces
+   *    `"[object Object]..."` — which surfaces as `Unterminated string in JSON at position N`.
+   * 2. **Pages are slices of the JSON string, not of its UTF-8 bytes.** Splitting the encoded bytes
+   *    can cut a multi-byte character in half (and shifts every offset the server expects).
+   * 3. **`requestId` is always sent**, even for a single page, because the server keys its buffer on
+   *    it whenever `pageCount !== 1`.
    */
   async update(
     entities: EntityChangeRecord[],
@@ -233,20 +256,20 @@ export class SyncTransport {
     pageSize = DEFAULT_PUSH_PAGE_SIZE
   ): Promise<void> {
     const payload = JSON.stringify({ entities, instanceId: clientInstanceId });
-    const body = new TextEncoder().encode(payload);
 
-    const pageCount = Math.max(1, Math.ceil(body.length / pageSize));
-    const requestId = pageCount > 1 ? randomString(12) : undefined;
+    const pageCount = Math.max(1, Math.ceil(payload.length / pageSize));
+    const requestId = randomString(10);
 
     for (let pageIndex = 0; pageIndex < pageCount; pageIndex++) {
-      const chunk = body.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize);
+      const chunk = payload.substr(pageIndex * pageSize, pageSize);
 
       const headers: Record<string, string> = {
-        "Content-Type": "application/json",
+        // Matches upstream: only an unpaged body is announced as JSON.
+        "Content-Type": pageCount === 1 ? "application/json" : "text/plain",
         pageCount: String(pageCount),
-        pageIndex: String(pageIndex)
+        pageIndex: String(pageIndex),
+        requestId
       };
-      if (requestId) headers.requestId = requestId;
 
       const params = new URLSearchParams({ logMarkerId: randomString(10) });
       const response = await this.request(`/api/sync/update?${params.toString()}`, {
@@ -285,6 +308,51 @@ export class SyncTransport {
       { method: "POST" }
     );
     if (!response.ok) await this.fail(response, "POST /api/sync/queue-sector");
+  }
+
+  // ------------------------------------------------- out-of-band blob fetch
+
+  /**
+   * `GET /api/notes/{noteId}/blob` — the JSON form, used for text-ish content.
+   *
+   * The response carries `isStubbed`, computed server-side as "empty content whose blobId is not the
+   * hash of empty content". For a binary note `content` comes back as `null` because the endpoint
+   * only decodes strings; use {@link fetchBytes} for those.
+   */
+  async fetchNoteBlob(noteId: string): Promise<BlobPayload> {
+    return this.fetchBlobJson(`/api/notes/${encodeURIComponent(noteId)}/blob`);
+  }
+
+  /** `GET /api/attachments/{attachmentId}/blob`. */
+  async fetchAttachmentBlob(attachmentId: string): Promise<BlobPayload> {
+    return this.fetchBlobJson(`/api/attachments/${encodeURIComponent(attachmentId)}/blob`);
+  }
+
+  private async fetchBlobJson(path: string): Promise<BlobPayload> {
+    const response = await this.request(path);
+    if (!response.ok) await this.fail(response, `GET ${path}`);
+    return (await response.json()) as BlobPayload;
+  }
+
+  /**
+   * Raw bytes for content the JSON endpoint cannot carry.
+   *
+   * `/open` serves the blob as-is rather than through the JSON envelope, which is the only way to
+   * retrieve an image or a file — `getBlobPojo` nulls `content` for anything that is not a string
+   * note.
+   */
+  async fetchNoteBytes(noteId: string): Promise<Uint8Array> {
+    return this.fetchBytes(`/api/notes/${encodeURIComponent(noteId)}/open`);
+  }
+
+  async fetchAttachmentBytes(attachmentId: string): Promise<Uint8Array> {
+    return this.fetchBytes(`/api/attachments/${encodeURIComponent(attachmentId)}/open`);
+  }
+
+  private async fetchBytes(path: string): Promise<Uint8Array> {
+    const response = await this.request(path);
+    if (!response.ok) await this.fail(response, `GET ${path}`);
+    return new Uint8Array(await response.arrayBuffer());
   }
 
   /** `GET /api/sync/stats` — unauthenticated progress information. */

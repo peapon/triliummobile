@@ -388,7 +388,93 @@ async function main(): Promise<void> {
       }
     }
 
-    console.log("\nScreenshots: /tmp/triliummobile-{1-capture,2-search,3-browse,4-pad-ink}.png");
+    // ------------------------------------------- on-demand download of stubbed blobs
+
+    // The seeded note's body is above the 4 MiB sync cap, so a fresh client holds only the stub.
+    // This is the case the whole blob cache exists for.
+    // Close the note the previous section left open: on a tablet the panel covers the tab bar.
+    if ((await page.locator("#detail-back").count()) > 0) {
+      await page.click("#detail-back");
+      await page.waitForTimeout(300);
+    }
+
+    await page.click('[data-tab="search"]');
+    await page.waitForSelector("#search-input");
+    await page.fill("#search-input", "E2E 大附件笔记");
+    await page.waitForTimeout(700);
+
+    const bigRow = page.locator(".row").first();
+    if ((await bigRow.count()) === 0) {
+      check("the seeded large note synced down", false);
+    } else {
+      await bigRow.click();
+      await page.waitForSelector(".detail");
+
+      const stubBanner = await page.locator("#fetch-note-blob").count();
+      check("a stubbed note offers a download instead of showing as empty", stubBanner === 1);
+
+      const attachments = await page.locator(".attachment").count();
+      check("the note's attachments are listed", attachments > 0, `${attachments} attachment(s)`);
+
+      const downloadButtons = await page.locator("[data-fetch-attachment]").count();
+      check("a stubbed attachment offers a download", downloadButtons > 0);
+
+      // ------------------------------------------------------------- fetch the body
+
+      if (stubBanner === 1) {
+        await page.click("#fetch-note-blob");
+
+        // Wait on the outcome — the body appearing — rather than on the download button
+        // disappearing. The button is also absent while the placeholder is re-rendered, so the
+        // weaker signal can pass for the wrong reason, and it failed spuriously when the emulator
+        // was saturating the CPU during this run.
+        let bodyLength = 0;
+        try {
+          await page.waitForFunction(
+            () => (document.querySelector(".detail .body")?.textContent ?? "").length > 100_000,
+            { timeout: 180_000 }
+          );
+          bodyLength = ((await page.textContent(".detail .body")) ?? "").length;
+        } catch {
+          bodyLength = ((await page.textContent(".detail .body")) ?? "").length;
+          console.log("    download did not complete. state:");
+          console.log("      toast   :", await page.locator(".toast").textContent().catch(() => "(none)"));
+          console.log("      status  :", await page.textContent("#status"));
+        }
+
+        check("the note body downloads on demand", bodyLength > 100_000, `${bodyLength} chars`);
+        check(
+          "the placeholder is gone once the content is local",
+          (await page.locator("#fetch-note-blob").count()) === 0
+        );
+      }
+
+      // ------------------------------------------------------- fetch an attachment
+
+      const firstDownload = page.locator("[data-fetch-attachment]").first();
+      if ((await firstDownload.count()) > 0) {
+        await firstDownload.click();
+        await page.waitForFunction(
+          () => document.querySelectorAll("[data-fetch-attachment]").length === 0,
+          { timeout: 120_000 }
+        );
+        check("the attachment downloaded and is now cached", true);
+      }
+
+      // The cache is local, so the download must not have produced a sync obligation.
+      await page.click("#detail-back");
+      await page.waitForTimeout(300);
+      const statusAfterFetch = (await page.textContent("#status")) ?? "";
+      check(
+        "downloading does not create work for the sync queue",
+        !/待同步/.test(statusAfterFetch),
+        statusAfterFetch
+      );
+
+      await page.screenshot({ path: "/tmp/triliummobile-5-download.png" });
+    }
+
+    console.log("\nScreenshots: /tmp/triliummobile-{1-capture,2-search,3-browse,4-pad-ink,5-download}.png");
   } finally {
     await browser?.close();
     if (existsSync(profile)) rmSync(profile, { recursive: true, force: true });

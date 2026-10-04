@@ -533,6 +533,59 @@ p.note code {
   flex: 0 0 auto;
 }
 
+/* --------------------------------------------------- on-demand attachment cache */
+
+.banner button {
+  margin-left: 10px;
+  padding: 6px 12px;
+  min-height: 34px;
+  font-size: 13px;
+}
+
+.attachments {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 0 16px 12px;
+}
+
+.attachment {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  font-size: 13px;
+}
+
+.attachment .attachment-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment .attachment-meta {
+  color: var(--muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.attachment button {
+  padding: 5px 12px;
+  min-height: 32px;
+  font-size: 13px;
+}
+
+.cache-note {
+  padding: 0 16px 14px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
 /* ------------------------------------------------------- wider viewports */
 
 @media (min-width: 720px) {

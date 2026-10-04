@@ -363,16 +363,38 @@ documentation:
 
 Note that a `.hap` **build** no longer depends on either of these — see §3.
 
-**Blocking, needs a device**
+**Answered — measured on a HarmonyOS emulator**
 
-The probe that answers all three of the following is written and **builds successfully** at
-`apps/harmony-probe`. Run it once a device is available.
+Items 3–5 were the open questions this ADR listed. All three are now resolved by running the probe on
+a real HarmonyOS API 26 device; full detail in `docs/harmonyos-verified.md`.
 
-3. **Does ArkWeb deliver `pointerType === "pen"`?** No Huawei doc guarantees it. Every ink feature
-   (b) and (c) depends on this. **Measure first — one day of work.**
-4. **Does `enablePrivateNetworkAccess(false)` (API 20+) plus a cleartext-HTTP opt-in actually allow
-   LAN `fetch` to a self-hosted server?** Reported symptom without it is `-10 ERR_ACCESS_DENIED`.
-5. **What is ArkWeb's real IndexedDB quota?** Unverified, and it determines whether the vault fits.
+3. **`pointerType === "pen"` — still unproven, and the only thing left.** An emulator has no stylus.
+   What *is* proven is that ArkWeb ships the complete pen-capable Pointer Events surface:
+   `getCoalescedEvents`, `getPredictedEvents`, `onpointerrawupdate` and `maxTouchPoints: 10` all
+   present. Likely to work; not yet evidence.
+4. **LAN cleartext `fetch` — works.** `http://192.168.3.213:18899/` returned **200 in 6 ms** from the
+   emulator, over plain HTTP, with no cleartext configuration of any kind. The research's claim that
+   cleartext is blocked by default **does not hold**. `enablePrivateNetworkAccess(false)` is doing its
+   job: a private-network address was reachable.
+5. **IndexedDB quota — 3.42 GB.** The vault's 18.3 MB of text fits with three orders of magnitude to
+   spare (D4).
+
+The research also needs two corrections, both measured: **ArkWeb is Chromium 144**, not M132, and the
+**File System Access API is supported**, contrary to the advice to assume otherwise. `navigator.share`
+and `Notification` are the two genuine gaps, the former relevant to share-into-Trilium capture.
+
+**The real obstacle is not the platform.** The same probe found that the WebView *cannot* reach a
+self-hosted Trilium server directly — not because of anything HarmonyOS does, but because the server
+sends `Cross-Origin-Resource-Policy: same-origin` and no CORS headers, exactly as measured in D9 on the
+desktop. A control request to a CORS-permitting host on the same LAN and the same port scheme returned
+200, so network, cleartext and the private-network gate are all fine. **D9's remedy is therefore the
+HarmonyOS remedy too: the ArkTS shell must proxy API calls natively (option 1), or the app must be
+served same-origin (option 2).** `enablePrivateNetworkAccess(false)` is necessary but nowhere near
+sufficient.
+
+**Blocking, needs a human**
+
+6. **A physical HarmonyOS device with a stylus**, and a Huawei account to sign for it, to settle item 3.
 
 **Design risks**
 

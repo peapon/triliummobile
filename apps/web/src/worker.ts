@@ -5,6 +5,7 @@
  * adds an RPC skin, because the storage driver requires a worker's synchronous OPFS access.
  */
 
+import { BlobCache, DEFAULT_BLOB_CACHE_BYTES } from "../../../src/store/blob-cache.js";
 import { NoteQueries } from "./data.js";
 import type { ProgressEvent, RpcRequest, WorkerMessage } from "./rpc.js";
 import { LocalStore, OPTION_DOCUMENT_SECRET, OPTION_SYNC_MAX_BLOB_CONTENT_SIZE, OPTION_SYNC_SERVER_HOST } from "../../../src/store/local-store.js";
@@ -13,11 +14,46 @@ import { SyncEngine } from "../../../src/sync/engine.js";
 import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/transport.js";
 
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
+const OPTION_BLOB_BUDGET = "triliumMobile.blobCacheBudget";
 const ROOT_NOTE_ID = "root";
 
 let store: LocalStore;
 let queries: NoteQueries;
 let peerInstanceId: string | null = null;
+
+/**
+ * A logged-in transport, kept so out-of-band blob fetches reuse the session instead of performing
+ * their own HMAC login per download.
+ */
+let session: SyncTransport | null = null;
+
+async function ensureSession(): Promise<SyncTransport> {
+  if (session) return session;
+
+  const host = store.getOption(OPTION_SYNC_SERVER_HOST);
+  const secret = store.getOption(OPTION_DOCUMENT_SECRET);
+  if (!host || !secret) throw new Error("尚未配置服务端");
+
+  const probe = new SyncTransport({ serverHost: host, documentSecret: secret, syncVersion: 0 });
+  const status = await probe.getSetupStatus();
+
+  const transport = new SyncTransport({
+    serverHost: host,
+    documentSecret: secret,
+    syncVersion: status.syncVersion,
+    maxBlobContentSize: maxBlobContentSize()
+  });
+
+  await transport.login();
+  session = transport;
+  return transport;
+}
+
+function blobBudgetBytes(): number {
+  const raw = store.getOption(OPTION_BLOB_BUDGET);
+  const parsed = raw === null ? DEFAULT_BLOB_CACHE_BYTES : Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_BLOB_CACHE_BYTES;
+}
 
 function post(message: WorkerMessage): void {
   (globalThis as unknown as Worker).postMessage(message);
@@ -115,6 +151,7 @@ async function configure(serverHost: string, password: string): Promise<void> {
 
   store.setOption(OPTION_SYNC_SERVER_HOST, serverHost.replace(/\/+$/, ""));
   store.setOption(OPTION_DOCUMENT_SECRET, documentSecret);
+  session = null;
 }
 
 async function sync(): Promise<{
@@ -143,6 +180,9 @@ async function sync(): Promise<{
 
   const status = await transport.getSetupStatus();
   transport.syncVersion = status.syncVersion;
+
+  // Publish the session so out-of-band blob fetches reuse it rather than logging in again.
+  session = transport;
 
   const engine = new SyncEngine({
     store,
@@ -279,10 +319,33 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       );
       return pending.length;
     }
+    case "fetchNoteBlob": {
+      const transport = await ensureSession();
+      return new BlobCache(store, transport, blobBudgetBytes()).ensureNote(request.params[0]);
+    }
+    case "fetchAttachmentBlob": {
+      const transport = await ensureSession();
+      return new BlobCache(store, transport, blobBudgetBytes()).ensureAttachment(request.params[0]);
+    }
+    case "listAttachments":
+      return store.listAttachments(request.params[0]).map((attachment) => ({
+        attachmentId: attachment.attachmentId,
+        role: attachment.role,
+        title: attachment.title,
+        mime: attachment.mime,
+        stubbed: attachment.blobId ? store.isBlobStubbed(attachment.blobId) : false
+      }));
+    case "cacheStats":
+      return { ...store.cacheStats(), budget: blobBudgetBytes() };
+    case "setBlobBudget":
+      store.setOption(OPTION_BLOB_BUDGET, String(request.params[0]));
+      store.evictBlobs(request.params[0]);
+      return undefined;
     case "reset":
       store.setOption(OPTION_DOCUMENT_SECRET, "");
       store.setOption(OPTION_SYNC_SERVER_HOST, "");
       peerInstanceId = null;
+      session = null;
       return undefined;
   }
 }

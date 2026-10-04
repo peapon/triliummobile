@@ -28,6 +28,9 @@ import {
 
 const DEFAULT_DB = `${process.env.HOME}/Library/Application Support/trilium-data/document.db`;
 
+/** Above this, a blob is counted but not recomputed. See the guard in `main`. */
+const MAX_HASHABLE_BLOB_BYTES = 8 * 1024 * 1024;
+
 /** entityName -> [table, primaryKeyColumn] */
 const ENTITY_TABLES: Record<string, [string, string]> = {
   notes: ["notes", "noteId"],
@@ -35,6 +38,10 @@ const ENTITY_TABLES: Record<string, [string, string]> = {
   attributes: ["attributes", "attributeId"],
   revisions: ["revisions", "revisionId"],
   attachments: ["attachments", "attachmentId"],
+  // `blobs` was absent here for a long time, which meant the blob hash formula — the one with its
+  // own shape and its own binary-to-text coercion — was never actually checked. A vault with binary
+  // attachments is exactly where getting it wrong shows up.
+  blobs: ["blobs", "blobId"],
   options: ["options", "name"],
   etapi_tokens: ["etapi_tokens", "etapiTokenId"]
 };
@@ -50,6 +57,29 @@ function emptyTally(): Tally {
   return { checked: 0, byVariant: {}, missed: 0, samples: [] };
 }
 
+/**
+ * Summarise a row for a mismatch sample.
+ *
+ * Long values are reported by length rather than content: a blob row can hold hundreds of megabytes,
+ * and `JSON.stringify` on one throws `RangeError: Invalid string length` — which is how this
+ * summariser came to exist.
+ */
+function describeRow(row: Record<string, unknown>): string {
+  const parts: string[] = [];
+
+  for (const [key, value] of Object.entries(row)) {
+    if (typeof value === "string" && value.length > 60) {
+      parts.push(`${key}=<string:${value.length}>`);
+    } else if (value instanceof Uint8Array) {
+      parts.push(`${key}=<bytes:${value.byteLength}>`);
+    } else {
+      parts.push(`${key}=${JSON.stringify(value) ?? String(value)}`);
+    }
+  }
+
+  return `{${parts.join(", ")}}`;
+}
+
 function main(): void {
   const dbPath = process.argv[2] ?? DEFAULT_DB;
   const db = new DatabaseSync(dbPath, { readOnly: true });
@@ -57,6 +87,7 @@ function main(): void {
   const tallies = new Map<string, Tally>();
   const misses: Array<{ entityName: string; entityId: string; expected: string; ours: string }> = [];
   let erasedSkipped = 0;
+  let oversizedSkipped = 0;
 
   for (const [entityName, [table, pk]] of Object.entries(ENTITY_TABLES)) {
     const tally = emptyTally();
@@ -71,6 +102,20 @@ function main(): void {
       if (change.isErased) {
         erasedSkipped++;
         continue;
+      }
+
+      // Hashing a blob means UTF-8 decoding it and then running SHA-1 over the result, in pure JS.
+      // A real vault holds individual attachments of hundreds of megabytes, so the formula is
+      // checked on everything under the cap and the giants are counted separately.
+      if (entityName === "blobs") {
+        const size = db
+          .prepare("SELECT LENGTH(content) AS n FROM blobs WHERE blobId = ?")
+          .get(change.entityId) as { n: number | null } | undefined;
+
+        if ((size?.n ?? 0) > MAX_HASHABLE_BLOB_BYTES) {
+          oversizedSkipped++;
+          continue;
+        }
       }
 
       tally.checked++;
@@ -130,7 +175,7 @@ function main(): void {
             `  ${entityName}/${change.entityId}\n` +
               `    expected ${change.hash}\n` +
               `    ours     ${plainHash}\n` +
-              `    row      ${JSON.stringify(row).slice(0, 220)}`
+              `    row      ${describeRow(row)}`
           );
         }
       }
@@ -183,6 +228,9 @@ function main(): void {
   const pct = totalChecked === 0 ? 0 : (reproduced / totalChecked) * 100;
   console.log(`\nReproduced: ${reproduced}/${totalChecked} (${pct.toFixed(3)}%)`);
   console.log(`Erased rows skipped (no entity left to rebuild from): ${erasedSkipped}`);
+  console.log(
+    `Oversized blobs skipped (> ${MAX_HASHABLE_BLOB_BYTES / 1024 / 1024} MiB, not hashable in JS): ${oversizedSkipped}`
+  );
   console.log(`Mismatch detail written to ${missPath}`);
 
   if (totalMissed > 0) {

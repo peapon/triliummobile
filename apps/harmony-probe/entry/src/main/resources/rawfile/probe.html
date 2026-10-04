@@ -118,6 +118,8 @@ function fmtBytes(n) {
 
 /* ---------------------------------------------------------------- 2. stylus */
 
+const seen = Object.create(null);
+
 (function stylus() {
   const host = $("stylus");
   const hasPointer = "PointerEvent" in window;
@@ -130,7 +132,6 @@ function fmtBytes(n) {
   );
 
   const log = $("styluslog");
-  const seen = Object.create(null);
   const pad = $("pad");
 
   function record(e) {
@@ -155,8 +156,11 @@ function fmtBytes(n) {
     }
   }
 
+  // Bound on the document, not just the pad: an automated swipe on a device lands wherever the
+  // gesture happens to start, and a probe that only counts strokes inside one box reports nothing.
   for (const type of ["pointerdown", "pointermove", "pointerup"]) {
     pad.addEventListener(type, record);
+    document.addEventListener(type, record, { passive: true });
   }
   // If the engine has no pointer events at all, fall back to touch so we still learn something.
   if (!hasPointer) {
@@ -259,6 +263,101 @@ $("idbtest").addEventListener("click", async () => {
 })();
 
 /* ------------------------------------------------------------------ 5. net */
+
+/* ------------------------------------------------------------------ report */
+
+/**
+ * Emit the whole result set as one machine-readable line.
+ *
+ * The page is the only place that can see WebView capabilities, and on a device its output would
+ * otherwise be a screen nobody can read. `onConsole` in Index.ets forwards this to hilog, so
+ * `hdc shell hilog | grep PROBE_JSON` retrieves it.
+ */
+function report() {
+  const storage = {};
+  for (const row of document.querySelectorAll("#storage .row")) {
+    storage[row.querySelector(".k").textContent] = row.querySelector(".v").textContent;
+  }
+
+  const features = {};
+  for (const row of document.querySelectorAll("#features .row")) {
+    features[row.querySelector(".k").textContent] = row.querySelector(".v").textContent;
+  }
+
+  const engine = {};
+  for (const row of document.querySelectorAll("#engine .row")) {
+    engine[row.querySelector(".k").textContent] = row.querySelector(".v").textContent;
+  }
+
+  const payload = {
+    kind: "probe",
+    engine,
+    storage,
+    features,
+    pointer: {
+      hasPointerEvent: "PointerEvent" in window,
+      hasGetCoalescedEvents: typeof PointerEvent !== "undefined" && !!PointerEvent.prototype.getCoalescedEvents,
+      hasGetPredictedEvents: typeof PointerEvent !== "undefined" && !!PointerEvent.prototype.getPredictedEvents,
+      hasRawUpdate: "onpointerrawupdate" in window,
+      maxTouchPoints: navigator.maxTouchPoints,
+      stylusCounts: seen,
+      penSeen: Boolean(seen.pen)
+    },
+    network
+  };
+
+  console.log("PROBE_JSON " + JSON.stringify(payload));
+}
+
+/**
+ * Try to reach a Trilium server across the network.
+ *
+ * The two candidates cover the two ways a QEMU-backed emulator can see its host: the host's LAN
+ * address, and the 10.0.2.2 alias. A plain `fetch` is the honest test — it fails the same way the
+ * real client would if the private-network gate or the cleartext policy were in the way.
+ */
+// Triage, in this order, because the three failures have different fixes:
+//   - public TLS failing    -> no useful network at all
+//   - public cleartext only -> the device-wide cleartext policy (ARKWEB_ERR_CLEARTEXT_NOT_PERMITTED)
+//   - private cleartext only-> the private-network gate (ARKWEB_ERR_ACCESS_DENIED)
+// The page's origin is `resource://rawfile`, so *every* request is cross-origin and the ordinary
+// CORS rules decide whether the read is allowed — independent of whether the packet arrived. These
+// four separate "no network" from "network fine, response not readable":
+//
+//   api.github.com   HTTPS + CORS   -> proves the network works
+//   10.0.2.2:18899   HTTP  + CORS   -> isolates *cleartext* from CORS; succeeds only if cleartext
+//                                      is permitted
+//   192.168.3.213    HTTP  + CORS   -> same, over the LAN address rather than the NAT alias
+//   10.0.2.2:18740   HTTP, no CORS  -> the real server: fails either way, which is the point
+const NETWORK_CANDIDATES = [
+  "https://api.github.com/",
+  "http://10.0.2.2:18899/",
+  "http://192.168.3.213:18899/",
+  "http://10.0.2.2:18740/api/setup/status"
+];
+
+const network = {};
+
+async function probeNetwork() {
+  for (const url of NETWORK_CANDIDATES) {
+    const started = performance.now();
+    try {
+      const response = await fetch(url, { cache: "no-store" });
+      const text = await response.text();
+      network[url] = {
+        ok: response.ok,
+        status: response.status,
+        ms: Math.round(performance.now() - started),
+        body: text.slice(0, 120)
+      };
+    } catch (error) {
+      network[url] = { ok: false, error: String(error) };
+    }
+  }
+}
+
+// Give the network probes time to settle before the single report line goes out.
+probeNetwork().finally(() => setTimeout(report, 500));
 
 $("probe").addEventListener("click", async () => {
   const log = $("netlog");

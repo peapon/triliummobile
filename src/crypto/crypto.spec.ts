@@ -32,7 +32,15 @@ describe("byte helpers", () => {
       "emoji 🎉 𝄞",
       "mixed ünïcödé ÿ",
       "\u00e9", // precomposed e-acute
-      "e\u0301" // decomposed e + combining acute
+      "e\u0301", // decomposed e + combining acute
+      // Lone surrogates must become U+FFFD, as the WHATWG encoder and Node both do. Emitting the
+      // code point directly would produce bytes no other implementation agrees with — and every blob
+      // id and entity hash is derived from these bytes.
+      "\ud800",
+      "a\ud800b",
+      "\udc00",
+      "\ud83c\udf89", // a well-formed surrogate pair
+      "\ud83c" // half of a pair, at the end
     ];
 
     for (const s of samples) {

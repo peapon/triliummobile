@@ -59,6 +59,15 @@ struct Index {
         .onPageEnd(() => {
           hilog.info(DOMAIN, TAG, "probe page loaded");
         })
+        // The probe reports its findings through `console.log`, which is otherwise invisible on a
+        // device. Forwarding it to hilog is what makes the results readable over `hdc shell hilog`
+        // instead of having to photograph the screen.
+        .onConsole((event) => {
+          if (event) {
+            hilog.info(DOMAIN, TAG, "WEB %{public}s", event.message.getMessage());
+          }
+          return false;
+        })
         .onErrorReceive((event) => {
           if (event) {
             this.status = "load error: " + event.error.getErrorInfo();

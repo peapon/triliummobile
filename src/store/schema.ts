@@ -132,7 +132,26 @@ CREATE INDEX IF NOT EXISTS IDX_attachments_ownerId_role on attachments (ownerId,
 CREATE INDEX IF NOT EXISTS IDX_attributes_name_value on attributes (name, value);
 CREATE INDEX IF NOT EXISTS IDX_attributes_noteId_index on attributes (noteId);
 CREATE INDEX IF NOT EXISTS IDX_attributes_value_index on attributes (value);
+
+-- Local-only. The server has no such table and nothing here is ever synced: it tracks which blobs
+-- this device has actually downloaded, so an LRU sweep can hand the space back. Upstream keeps
+-- local-only tables too (recent_notes, user_data, sessions); this one is ours.
+CREATE TABLE IF NOT EXISTS blob_cache (
+    blobId     TEXT PRIMARY KEY,
+    byteSize   INTEGER NOT NULL,
+    lastAccess TEXT NOT NULL
+);
 `;
+
+/**
+ * The blob id of genuinely empty content.
+ *
+ * A sync stub — a blob whose real content exceeded this device's size cap — is served with empty
+ * content, so "empty" alone does not identify one. Upstream distinguishes them by comparing against
+ * this constant, and content-addressing makes that sound: a blob's id *is* the hash of its content,
+ * so empty content can only carry this id.
+ */
+export const EMPTY_BLOB_ID = "z4PhNX7vuL3xVChQ1m2A";
 
 /**
  * Tables that participate in sync, and the column that identifies a row.

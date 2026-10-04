@@ -18,10 +18,16 @@ import {
   toEntityRow,
   type EntityName
 } from "../entities/hashes.js";
-import { base64Decode, hashedBlobId } from "../crypto/index.js";
+import { base64Decode, hashedBlobId, utf8Encode } from "../crypto/index.js";
 import { randomString } from "../util/random.js";
 import type { SqlDatabase, SqlValue } from "./database.js";
-import { BOOLEAN_INT_COLUMNS, ENTITY_PRIMARY_KEYS, ERASABLE_ENTITIES, SCHEMA_SQL } from "./schema.js";
+import {
+  BOOLEAN_INT_COLUMNS,
+  EMPTY_BLOB_ID,
+  ENTITY_PRIMARY_KEYS,
+  ERASABLE_ENTITIES,
+  SCHEMA_SQL
+} from "./schema.js";
 import type { EntityChange, EntityChangeRecord } from "../sync/types.js";
 
 /** Options the client owns locally. Mirrors the names upstream stores. */
@@ -252,7 +258,7 @@ export class LocalStore {
             `Empty entity row for ${remoteEC.entityName}/${remoteEC.entityId} (changeId ${remoteEC.changeId})`
           );
         }
-        const row = preProcessContent(remoteEC.entityName, remoteEntityRow);
+        const row = this.reconcileStub(remoteEC.entityName, remoteEntityRow);
         this.replaceRow(remoteEC.entityName, row);
       }
 
@@ -278,6 +284,121 @@ export class LocalStore {
     }
 
     return "noop";
+  }
+
+  /**
+   * Refuse to let a sync stub erase content this device already downloaded.
+   *
+   * A stub carries empty content but the *real* hash, so it says nothing about the content — while a
+   * blob's id is the hash of its content, so a blobId we already hold content for is, by
+   * construction, that same content. Re-applying a stub over a fetched blob would silently throw the
+   * download away and re-stub the note.
+   */
+  private reconcileStub(entityName: string, row: Record<string, unknown>): Record<string, unknown> {
+    const processed = preProcessContent(entityName, row);
+
+    if (entityName !== "blobs") return processed;
+
+    const blobId = processed.blobId;
+    if (typeof blobId !== "string" || blobId === EMPTY_BLOB_ID) return processed;
+    if (!isStubContent(processed.content)) return processed;
+
+    const cached = this.db.get<{ content: unknown }>(
+      "SELECT content FROM blobs WHERE blobId = ?",
+      [blobId]
+    );
+
+    if (cached && !isStubContent(cached.content)) {
+      return { ...processed, content: cached.content };
+    }
+
+    return processed;
+  }
+
+  // ------------------------------------------------------------ blob cache
+
+  /**
+   * Whether a blob's stored content is a sync stub rather than its real content.
+   *
+   * `EMPTY_BLOB_ID` is excluded because empty content is a legitimate state for a genuinely empty
+   * note, and an empty note must not be offered as "download this".
+   */
+  isBlobStubbed(blobId: string): boolean {
+    if (blobId === EMPTY_BLOB_ID) return false;
+
+    const row = this.db.get<{ content: unknown }>("SELECT content FROM blobs WHERE blobId = ?", [blobId]);
+    return !row || isStubContent(row.content);
+  }
+
+  /** Store content fetched out of band, and record it for the LRU sweep. */
+  cacheBlob(blobId: string, content: string | Uint8Array, now: Date = new Date()): void {
+    const bytes = typeof content === "string" ? utf8Encode(content).length : content.byteLength;
+
+    this.db.transaction(() => {
+      this.db.run("UPDATE blobs SET content = ? WHERE blobId = ?", [content, blobId]);
+      this.db.run(
+        `INSERT INTO blob_cache (blobId, byteSize, lastAccess) VALUES (?, ?, ?)
+         ON CONFLICT(blobId) DO UPDATE SET byteSize = excluded.byteSize, lastAccess = excluded.lastAccess`,
+        [blobId, bytes, utcNowDateTime(now)]
+      );
+    });
+  }
+
+  /** Record a read, so the sweep evicts what is genuinely least used. */
+  touchBlob(blobId: string, now: Date = new Date()): void {
+    this.db.run("UPDATE blob_cache SET lastAccess = ? WHERE blobId = ?", [utcNowDateTime(now), blobId]);
+  }
+
+  /**
+   * Drop least-recently-used downloaded blobs until the cache fits its budget.
+   *
+   * Eviction restores the stub — empty content — which is exactly the state the blob arrived in, so
+   * an evicted blob is indistinguishable from one that was never fetched. The `entity_changes` row is
+   * deliberately untouched: the hash describes the real content and must not be recomputed from a
+   * stub.
+   */
+  evictBlobs(maxBytes: number, now: Date = new Date()): { evicted: number; freedBytes: number } {
+    const total = this.db.get<{ bytes: number | null }>(
+      "SELECT SUM(byteSize) AS bytes FROM blob_cache"
+    );
+    let excess = (total?.bytes ?? 0) - maxBytes;
+
+    if (excess <= 0) return { evicted: 0, freedBytes: 0 };
+
+    const candidates = this.db.all<{ blobId: string; byteSize: number }>(
+      "SELECT blobId, byteSize FROM blob_cache ORDER BY lastAccess ASC"
+    );
+
+    let evicted = 0;
+    let freedBytes = 0;
+
+    for (const candidate of candidates) {
+      if (excess <= 0) break;
+
+      this.db.run("UPDATE blobs SET content = '' WHERE blobId = ?", [candidate.blobId]);
+      this.db.run("DELETE FROM blob_cache WHERE blobId = ?", [candidate.blobId]);
+
+      excess -= candidate.byteSize;
+      freedBytes += candidate.byteSize;
+      evicted++;
+    }
+
+    void now;
+    return { evicted, freedBytes };
+  }
+
+  cacheStats(): { entries: number; bytes: number; stubbed: number } {
+    const row = this.db.get<{ entries: number; bytes: number | null }>(
+      "SELECT COUNT(*) AS entries, SUM(byteSize) AS bytes FROM blob_cache"
+    );
+
+    const stubbed = this.db.get<{ c: number }>(
+      `SELECT COUNT(*) AS c FROM blobs
+        WHERE blobId != ? AND (content IS NULL OR LENGTH(content) = 0)`,
+      [EMPTY_BLOB_ID]
+    );
+
+    return { entries: row?.entries ?? 0, bytes: row?.bytes ?? 0, stubbed: stubbed?.c ?? 0 };
   }
 
   /** `eraseEntity()` — a tombstone deletes the row, for exactly these tables. */
@@ -638,9 +759,9 @@ export class LocalStore {
 
   // ------------------------------------------------------------------ helpers
 
-  /** Generic single-row read, for the engine's entity lookups. */
-  queryRaw(sql: string, params: SqlValue[] = []): Record<string, unknown> | undefined {
-    return this.db.get<Record<string, unknown>>(sql, params);
+  /** Generic single-row read, for the engine's entity lookups and the blob cache. */
+  queryRaw<T = Record<string, unknown>>(sql: string, params: SqlValue[] = []): T | undefined {
+    return this.db.get<T>(sql, params);
   }
 
   /** The whole journal in id order — the order the content-hash fold depends on. */
@@ -706,6 +827,19 @@ export function preProcessContent(
 
   const bytes = base64ToBytes(row.content);
   return { ...row, content: bytes.length === 0 ? "" : bytes };
+}
+
+/**
+ * Whether stored content is a sync stub.
+ *
+ * An empty string, a zero-length buffer and NULL are all "no content here"; which one appears
+ * depends on whether the row was written by a pull, by a fetch or by eviction.
+ */
+export function isStubContent(content: unknown): boolean {
+  if (content === null || content === undefined) return true;
+  if (typeof content === "string") return content.length === 0;
+  if (content instanceof Uint8Array) return content.byteLength === 0;
+  return false;
 }
 
 export function base64ToBytes(base64: string): Uint8Array {

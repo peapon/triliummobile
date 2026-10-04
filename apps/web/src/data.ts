@@ -6,6 +6,8 @@
  * is presentation-shaped — child lists, search, content decoding.
  */
 
+import { isStubContent } from "../../../src/store/local-store.js";
+import { EMPTY_BLOB_ID } from "../../../src/store/schema.js";
 import type { SqlDatabase } from "../../../src/store/database.js";
 
 export const ROOT_NOTE_ID = "root";
@@ -103,10 +105,7 @@ export class NoteQueries {
     );
 
     const blob = note.blobId
-      ? this.db.get<{ content: unknown; contentLength?: number }>(
-          "SELECT content FROM blobs WHERE blobId = ?",
-          [note.blobId]
-        )
+      ? this.db.get<{ content: unknown }>("SELECT content FROM blobs WHERE blobId = ?", [note.blobId])
       : undefined;
 
     const labels = this.db.all<{ name: string; value: string }>(
@@ -114,7 +113,13 @@ export class NoteQueries {
       [noteId]
     );
 
-    const { text, stubbed } = decodeContent(blob?.content);
+    const text = decodeContent(blob?.content);
+
+    // The same test the server uses: empty content under a blobId that is not the hash of empty
+    // content. Checking "is the content empty" alone would label every genuinely empty note as an
+    // undownloaded one, and offer the user a download that never arrives.
+    const stubbed =
+      note.blobId !== null && note.blobId !== EMPTY_BLOB_ID && isStubContent(blob?.content);
 
     return {
       ...note,
@@ -181,24 +186,15 @@ function escapeLike(input: string): string {
 }
 
 /**
- * Blob content reaches the store as a string, a `Uint8Array` (after a sync decode), or `""` when the
- * server stubbed it for exceeding the size cap. Only the last case is worth telling the user about.
+ * Blob content reaches the store as a string, or as a `Uint8Array` when it was decoded from base64
+ * during a sync. Decoding is all this does — whether the result is a *stub* is a question about the
+ * blob id, not about the content, and is answered where the id is known.
  */
-export function decodeContent(content: unknown): { text: string; stubbed: boolean } {
-  if (content === null || content === undefined) return { text: "", stubbed: false };
-
-  if (typeof content === "string") {
-    // An empty string from the server means "too large to send", never "empty note" — an actually
-    // empty note still carries markup. Only report it as stubbed when a blob row exists at all.
-    return { text: content, stubbed: false };
-  }
-
-  if (content instanceof Uint8Array) {
-    if (content.byteLength === 0) return { text: "", stubbed: true };
-    return { text: new TextDecoder().decode(content), stubbed: false };
-  }
-
-  return { text: String(content), stubbed: false };
+export function decodeContent(content: unknown): string {
+  if (content === null || content === undefined) return "";
+  if (typeof content === "string") return content;
+  if (content instanceof Uint8Array) return new TextDecoder().decode(content);
+  return String(content);
 }
 
 /** Strip markup down to readable text for list snippets. */
