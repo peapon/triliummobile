@@ -12,11 +12,27 @@ This README is the operator's view: what exists, how to run it, and what has act
 | Crypto primitives (SHA-1/256/512, HMAC-SHA-256, base64) | **Done and verified** — byte-identical to `node:crypto` |
 | Entity hashes | **Done and verified** — 100% on a fresh server DB; 100% of notes/branches/attributes in a live 2.6 GB vault |
 | Sync transport (login, pull, paged push, check) | **Done and verified** — 252/252 content-hash sectors match a real server |
-| Sync engine (journal, cursors, conflict bounce-back, resumability) | **Not started** |
-| Local store (IndexedDB adapter) | **Not started** |
+| Local replica (schema, journal, conflict bounce-back, tombstones) | **Done and verified** — full round-trip against a real server |
+| Offline capture (`createTextNote`) | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
+| Content-hash verification loop | **Done** — folds the journal sector by sector, with re-queue retry |
 | UI (phone: capture/search/view; pad: + light edit + ink) | **Not started** |
 | HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
 | HarmonyOS runtime behaviour (pen input, LAN fetch, storage quota) | **Awaiting a device** — probe written and building |
+
+## What the round-trip proves
+
+[tools/roundtrip.ts](tools/roundtrip.ts) runs the whole loop against a real Trilium server and
+verifies each phase independently:
+
+```
+1. Initial sync     pulls the entire server; our content-hash fold matches every sector
+2. Local capture    3 notes created offline (incl. Chinese, emoji, combining accents)
+3. Push + verify    the notes are read back out of the *server's own database file*
+4. Fresh client     an independent local replica syncs and reproduces all 3 notes
+```
+
+Phase 3 is the one that matters: a push returning `204` proves nothing, so the check reads the
+server's SQLite file directly.
 
 ## Building the HarmonyOS probe
 
@@ -75,7 +91,17 @@ This logs in, pulls everything, folds the result into per-sector content hashes,
 with the server's own `GET /api/sync/check`. **A `PASS` on every sector is the bar** — anything less
 means the implementation diverges from the reference, even if every HTTP call returned 200.
 
-### 3. Check the hash implementation against a real vault
+### 3. Run the full round-trip
+
+```bash
+pnpm exec tsx tools/roundtrip.ts http://127.0.0.1:18740
+```
+
+Pulls the whole server, creates notes offline, pushes them, then reads the server's own database
+file to confirm they arrived — and finally syncs a second, independent replica to confirm they are
+reproducible. Each run creates three new notes on the test server, which is disposable.
+
+### 4. Check the hash implementation against a real vault
 
 ```bash
 pnpm exec tsx tools/verify-hashes.ts                                  # your live vault
@@ -95,8 +121,10 @@ pnpm exec tsx tools/diagnose-hash.ts attachments <entityId>
 ```
 src/crypto/          pure-JS digests + Trilium's exact hash rules
 src/entities/        hashedProperties, boolean coercion, blob hash override
-src/sync/            wire types, HTTP transport, content-hash fold
-tools/               verification harnesses (hash comparison, protocol probe, diagnostics)
+src/store/           server schema, journal application, offline capture, cursors
+src/sync/            wire types, HTTP transport, content-hash fold, sync engine
+src/util/            random ids
+tools/               verification harnesses (round-trip, hash comparison, protocol probe, diagnostics)
 apps/harmony-probe/  ArkWeb capability probe + no-account .hap build toolchain
 docs/research/       four source-cited research reports
 docs/adr/            architecture decision records
