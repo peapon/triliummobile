@@ -2,17 +2,16 @@
 
 - **Status:** Accepted
 - **Date:** 2026-10-04
-- **Deciders:** project owner + agent
+- **Deciders:** project owner + coding agent
 - **Supersedes:** none
 
 ---
 
 ## 1. Context
 
-### 1.1 The premise, corrected
+### 1.1 The premise
 
-The starting assumption was that Trilium "lacks a usable mobile client". That is out of date. As of
-2026-10:
+Trilium mobile clients that exist as of 2026-10:
 
 | Client | Approach | State |
 |---|---|---|
@@ -20,28 +19,29 @@ The starting assumption was that Trilium "lacks a usable mobile client". That is
 | **[TriliumDroid](https://github.com/FliegendeWurst/TriliumDroid)** | Kotlin, copies Trilium's SQLite DDL verbatim, reimplements the sync protocol | 403★, last push 2026-10-01 |
 | **[pocket-trilium](https://github.com/Nriver/pocket-trilium)** | Ships a **proot Linux rootfs** and runs the real Trilium server on `127.0.0.1:8080`; the Flutter app is a WebView | Works, but a poor architecture |
 
-So the gap is not "no mobile client". It is **no mobile client that is offline-first, genuinely
-touch-native, and available on HarmonyOS**.
+The gap is **no mobile client that is offline-first, genuinely touch-native, and available on
+HarmonyOS**.
 
 ### 1.2 Requirements from the owner
 
 - **Offline-first with bidirectional sync** against a self-hosted server — the existing
-  create-offline / sync-on-connect behaviour is the thing that works and must be preserved.
+  create-offline / sync-on-connect behaviour must be preserved.
 - **Cross-platform, phone and tablet**, with **HarmonyOS as the priority**.
-- **Good UX** — this is the actual complaint about the existing options.
+- **Good UX** — the actual complaint about the existing options.
 - **Phone:** quick capture, quick search, viewing. No heavy editing.
 - **Pad:** the above plus light keyboard editing and stylus input.
 - **Blobs:** fetch on demand with an LRU cache, not bulk-synced.
 
-### 1.3 Hard constraints discovered
+### 1.3 Hard constraints
 
 - **HarmonyOS NEXT / 5+ cannot run Android APKs.** OpenHarmony 7.0 Beta1 (2026-05, API 26)
   reportedly removed the APK compatibility layer entirely. There is no "ship the APK" shortcut.
-- **This machine has no mobile toolchain at all**: no DevEco Studio / `ohpm` / `hvigor`, no Android
-  SDK, no full Xcode (CommandLineTools only), and only JDK 25 (DevEco bundles JDK 17 and breaks with a
-  foreign JDK on `PATH`). Android and iOS builds are equally impossible today.
-- **Real-device HarmonyOS install requires a Huawei account with 实名认证 (*real-name verification*) and a device-bound debug
-  certificate, and the signing step is GUI-only** — it cannot be completed from the CLI.
+- **This machine has no mobile toolchain at all**: no DevEco Studio / `ohpm` / `hvigor`, no
+  Android SDK, no full Xcode (CommandLineTools only), and only JDK 25 (DevEco bundles JDK 17
+  and breaks with a foreign JDK on `PATH`). Android and iOS builds are equally impossible today.
+- **Real-device HarmonyOS install requires a Huawei account with 实名认证 (*real-name
+  verification*) and a device-bound debug certificate, and the signing step is GUI-only** — it
+  cannot be completed from the CLI.
 
 ---
 
@@ -49,71 +49,75 @@ touch-native, and available on HarmonyOS**.
 
 ### D1 — A web core in thin, hand-written native shells. Not a cross-platform UI framework.
 
-**Built, and running on a HarmonyOS emulator.** The ArkTS shell is ~180 lines: a `Web` component, a
-request interceptor, and a JS bridge. Three mechanisms in it were each forced by a measurement:
+**Built, and running on a HarmonyOS emulator.** The ArkTS shell is ~180 lines: a `Web`
+component, a request interceptor, and a JS bridge. Three mechanisms in it are each forced by a
+measured constraint:
 
-1. **The page is served from `https://localhost`, not `resource://rawfile`.** A rawfile page reports
-   origin `null`, and on the device both `new Worker(...)` and `navigator.storage.getDirectory()`
-   throw `SecurityError` there — no workers, no OPFS. The client needs both: the OPFS SAH-Pool VFS is
-   worker-only (D5) and the replica lives in OPFS. `onInterceptRequest` answers static requests from
-   the package, which yields a real origin with no local server to run.
-2. **The API goes through a `javaScriptProxy` bridge, not the interceptor.** `onInterceptRequest` is
-   synchronous — its callback returns a `WebResourceResponse`, not a promise — so it cannot perform a
-   network round trip. That also happens to be the only way past D9's same-origin problem.
-3. **The worker relays its HTTP through the main frame.** The bridge is injected into the main frame;
-   the sync engine must live in the worker that owns the database. `SyncTransport` already took a
-   `fetchImpl`, so the relay cost the protocol nothing — not one line changed.
+1. **The page is served from `https://localhost`, not `resource://rawfile`.** A rawfile page
+   reports origin `null`, and there `new Worker(...)` and `navigator.storage.getDirectory()`
+   both throw `SecurityError` — no workers, no OPFS. The client needs both: the OPFS SAH-Pool
+   VFS is worker-only (D5) and the replica lives in OPFS. `onInterceptRequest` answers static
+   requests from the package, which yields a real origin with no local server to run.
+2. **The API goes through a `javaScriptProxy` bridge, not the interceptor.** `onInterceptRequest`
+   is synchronous — its callback returns a `WebResourceResponse`, not a promise — so it cannot
+   perform a network round trip. That is also the only way past D9's same-origin problem.
+3. **The worker relays its HTTP through the main frame.** The bridge is injected into the main
+   frame; the sync engine must live in the worker that owns the database. `SyncTransport`
+   already took a `fetchImpl`, so the relay cost the protocol nothing.
 
-Packaged by `apps/harmony-probe/package-app.sh`, 1.47 MB. Verified end to end on the device: a full
-pull of 2,909 entities, and a note captured offline on the emulator confirmed by reading the server's
-own database.
+Packaged by `apps/harmony-probe/package-app.sh`, 1.47 MB. Verified end to end on the device: a
+full pull of 2,909 entities, and a note captured offline on the emulator confirmed by reading
+the server's own database.
 
 The UI is HTML/CSS/JS running in a WebView; each platform gets a minimal shell.
 
-- HarmonyOS: a hand-written **ArkTS shell** — one `Web` component plus a `javaScriptProxy` bridge
-  (optionally an in-app local HTTP server so the WebView gets a real `http://localhost` origin).
+- HarmonyOS: a hand-written **ArkTS shell** — one `Web` component plus a `javaScriptProxy`
+  bridge.
 - Android / iOS: **Capacitor** (mature there).
-- The browser: the same bundle runs as a PWA, which is how everything is developed and tested on
-  this machine.
+- The browser: the same bundle runs as a PWA, which is how everything is developed and tested
+  on this machine.
 
-**Why.** Every alternative ends at ArkWeb anyway for anything WebView-based, so a cross-platform UI
-framework buys a second build system for no gain:
+**Why.** Every alternative ends at ArkWeb anyway for anything WebView-based, so a cross-platform
+UI framework buys a second build system for no gain:
 
 - **Flutter-ohos** is maintained by the OpenHarmony SIG (not Google), lags upstream ~4 months by
   design, and the SIG's own roadmap admits unresolved **memory and CPU-load gaps**.
-- **RNOH** is well-resourced but public npm lags its announced lines (no 0.86.x public, `latest` →
-  0.72.143), couples to ArkUI C-API internals, and its background thread is documented as not
+- **RNOH** is well-resourced but public npm lags its announced lines (no 0.86.x public, `latest`
+  → 0.72.143), couples to ArkUI C-API internals, and its background thread is documented as not
   production-safe.
-- **ArkUI-X 6.0.0** inverts sharing: the shared language becomes ArkTS, stranding every other target.
-- **`capacitor-harmony`** is v0.1.2, published 2026-09-13, single maintainer, and its own README says
-  it is "not a full replication of Capacitor capabilities". Deliberately not a dependency.
+- **ArkUI-X 6.0.0** inverts sharing: the shared language becomes ArkTS, stranding every other
+  target.
+- **`capacitor-harmony`** is v0.1.2, published 2026-09-13, single maintainer, and its own README
+  says it is "not a full replication of Capacitor capabilities". Deliberately not a dependency.
 - **pocket-trilium's proot rootfs** is rejected outright: ~360 MB, `double free` crashes, needs
-  `jemalloc` `LD_PRELOAD` and Android developer-options changes, and breaks on every server upgrade.
+  `jemalloc` `LD_PRELOAD` and Android developer-options changes, and breaks on every server
+  upgrade.
 
 ### D2 — Implement Trilium's native sync protocol in TypeScript. Do not wrap the WASM standalone build.
 
 The official mobile app reuses the WASM server. We do not, because:
 
-- ArkWeb + WASM + OPFS is an unverified triple on the priority platform, and **HarmonyOS's opt-in
-  Secure Shield mode disables WebAssembly entirely**.
-- The WASM build drags the full server into a WebView, which is the opposite of "good UX" on a phone.
+- ArkWeb + WASM + OPFS is an unverified triple on the priority platform, and **HarmonyOS's
+  opt-in Secure Shield mode disables WebAssembly entirely**.
+- The WASM build drags the full server into a WebView, which is the opposite of "good UX" on a
+  phone.
 
-Instead the protocol is ported to TypeScript. Critically, **the port copies upstream's exact
-formulas rather than re-deriving them** — upstream `packages/trilium-core` is itself TypeScript, so
-the parts that must match byte-for-byte are copied from the reference implementation.
+Instead the protocol is ported to TypeScript. **The port copies upstream's exact formulas rather
+than re-deriving them** — upstream `packages/trilium-core` is itself TypeScript, so the parts
+that must match byte-for-byte are copied from the reference implementation.
 
 ### D3 — Hashes are *carried*, never recomputed.
 
 An entity's hash is computed once by whoever created the change and then travels in
 `entity_changes`. The content-hash check folds the *stored* hashes; it never re-derives them.
 
-This is not a convenience — it is forced by an upstream inconsistency. The hash of an attachment
-depends on whether it reached memory through the creation path (key absent → `"undefined"`) or the
-reload path (key `null` → `"null"`). Measured: a fresh database uses `"undefined"` for all 19
-attachments; a long-lived vault uses `"null"` for 1735 and `"undefined"` for 573.
+This is forced by an upstream inconsistency. The hash of an attachment depends on whether it
+reached memory through the creation path (key absent → `"undefined"`) or the reload path (key
+`null` → `"null"`). Measured: a fresh database uses `"undefined"` for all 19 attachments; a
+long-lived vault uses `"null"` for 1735 and `"undefined"` for 573.
 
-Consequence: recompute a hash **only** when creating a change for an entity we ourselves created or
-modified, and use the creation-path convention there.
+Consequence: recompute a hash **only** when creating a change for an entity this client created
+or modified, and use the creation-path convention there.
 
 ### D4 — Eager text, lazy blobs.
 
@@ -124,44 +128,47 @@ Measured on the owner's real 2.6 GB vault:
 | Note tree + branches + attributes + **all** text/code/doc content | **18.3 MB** |
 | `file` / `image` attachments | **1396 MB** |
 
-So the entire *knowledge* of the vault is 18 MB, and 99% of the bulk is a handful of large binaries
+The entire *knowledge* of the vault is 18 MB, and 99% of the bulk is a handful of large binaries
 (the largest single blobs are a 164 MB MP4, a 140 MB MP3, a 135 MB PPTX).
 
-The protocol supports exactly this: passing `maxBlobContentSize` on `GET /api/sync/changed` makes the
-server return oversized blobs with empty `content` **while leaving `entityChange.hash` untouched**, so
-content-hash checks still pass. Missing content is then fetched on demand via
-`GET /api/notes/{noteId}/blob` and cached with an LRU. This is the mechanism upstream itself uses on
-mobile, where the desktop default of `syncMaxBlobContentSize: 0` (unlimited) "blows the
-WASM/native heap during sync".
+The protocol supports exactly this: passing `maxBlobContentSize` on `GET /api/sync/changed`
+makes the server return oversized blobs with empty `content` **while leaving
+`entityChange.hash` untouched**, so content-hash checks still pass. Missing content is fetched
+on demand via `GET /api/notes/{noteId}/blob` and cached with an LRU. This is the mechanism
+upstream itself uses on mobile, where the desktop default of `syncMaxBlobContentSize: 0`
+(unlimited) "blows the WASM/native heap during sync".
 
 ### D5 — SQLite (WASM + OPFS) behind an interface, running **inside a Web Worker**.
 
-**Revised during implementation**, on evidence. The original plan was IndexedDB, on the reasoning
-that it needs no WASM and therefore survives HarmonyOS's Secure Shield mode. Two findings changed it:
+**Revised during implementation**, on evidence. The original plan was IndexedDB, on the
+reasoning that it needs no WASM and therefore survives HarmonyOS's Secure Shield mode. Two
+findings changed it:
 
-1. **The store must be synchronous.** The journal application is a tight read-then-write loop, and
-   the content-hash fold hashes every row in one pass. IndexedDB's transaction model cannot compose
-   with an imperative async loop (`await` inside a transaction closes it), so an IndexedDB store
-   would have forced either a rewrite of the protocol logic or thousands of promise hops.
+1. **The store must be synchronous.** The journal application is a tight read-then-write loop,
+   and the content-hash fold hashes every row in one pass. IndexedDB's transaction model cannot
+   compose with an imperative async loop (`await` inside a transaction closes it), so an
+   IndexedDB store would have forced either a rewrite of the protocol logic or thousands of
+   promise hops.
 2. **`sqlite-wasm` + OPFS SAH-Pool is synchronous** — and it is the same engine upstream's own
    standalone and Capacitor builds run on. Verified working here before committing to it.
 
-The cost is a hard constraint that was **verified, not assumed**: the SAH-Pool VFS needs
-`FileSystemFileHandle.createSyncAccessHandle()`, which browsers expose **only to workers**. On the
-main thread the library fails with "Missing required OPFS APIs". So the database, the transport and
-the engine all live in a `Worker`, and the UI reaches them over an RPC boundary. That matches
-upstream exactly — its standalone build runs the whole core in a dedicated worker — and it has the
-side benefit that no synchronous SQLite call can block a frame.
+The cost is a hard constraint, verified rather than assumed: the SAH-Pool VFS needs
+`FileSystemFileHandle.createSyncAccessHandle()`, which browsers expose **only to workers**. On
+the main thread the library fails with "Missing required OPFS APIs". The database, the transport
+and the engine therefore all live in a `Worker`, and the UI reaches them over an RPC boundary.
+This matches upstream — its standalone build runs the whole core in a dedicated worker — and
+means no synchronous SQLite call can block a frame.
 
-The Secure Shield caveat stands and is the reason this sits behind `SqlDatabase`: a native SQLite
-bridge (ArkTS `relationalStore`, Android SQLite, iOS SQLite) can replace the adapter per platform
-without touching anything above it.
+The Secure Shield caveat stands and is the reason this sits behind `SqlDatabase`: a native
+SQLite bridge (ArkTS `relationalStore`, Android SQLite, iOS SQLite) can replace the adapter per
+platform without touching anything above it.
 
 ### D6 — Replicate the server's schema; do not build a document model.
 
-Sync is **row-level change-log replication**: `entity_changes` rows carry the entity inline, and the
-receiver applies raw rows (`REPLACE INTO <entityName>`). A document-oriented local model fights the
-protocol at every step. Every entity table, its columns, and the specific hash rules must match.
+Sync is **row-level change-log replication**: `entity_changes` rows carry the entity inline, and
+the receiver applies raw rows (`REPLACE INTO <entityName>`). A document-oriented local model
+fights the protocol at every step. Every entity table, its columns, and the specific hash rules
+must match.
 
 ### D7 — Stylus: delegate where free, build ink once.
 
@@ -176,48 +183,46 @@ freeform drawing. Platform support is sharply asymmetric:
 
 Therefore:
 
-- **(a) handwriting → text**: use the system IME on iPadOS and Android. On HarmonyOS this requires a
-  **native ArkTS handwriting input field** — the only mandatory native work for this feature.
-- **(b) ink annotation and (c) freeform drawing**: **one platform-agnostic canvas ink layer in the web
-  core**, with our own stroke model. Never adopt PencilKit / Pen Kit / `androidx.ink` as *storage* —
-  Pen Kit's `save()` format is opaque, undocumented, and does not export strokes.
+- **(a) handwriting → text**: use the system IME on iPadOS and Android. On HarmonyOS this
+  requires a **native ArkTS handwriting input field** — the only mandatory native work for this
+  feature.
+- **(b) ink annotation and (c) freeform drawing**: **one platform-agnostic canvas ink layer in
+  the web core**, with our own stroke model. Never adopt PencilKit / Pen Kit / `androidx.ink` as
+  *storage* — Pen Kit's `save()` format is opaque, undocumented, and does not export strokes.
 - Ink persists as a note **attachment** (`ink-main.json`, role `ink`) with points normalised to
   [0,1]; never inline base64 into note HTML. The note carries a
-  `<div class="trilium-ink" data-ink-id="main">` placeholder so the reference travels with the note
-  rather than being inferred from whichever attachments happen to exist.
+  `<div class="trilium-ink" data-ink-id="main">` placeholder so the reference travels with the
+  note rather than being inferred from whichever attachments happen to exist.
 
-**Built.** `apps/web/src/ink.ts` holds the model and the canvas; `InkCanvas` is the capture/rendering
-path and `paintInk()` is the read-only path, so a phone renders ink a tablet drew without attaching
-input handlers. Details that matter:
+**Built.** `apps/web/src/ink.ts` holds the model and the canvas; `InkCanvas` is the
+capture/rendering path and `paintInk()` is the read-only path, so a phone renders ink a tablet
+drew without attaching input handlers. Details that matter:
 
 - Strokes carry a normalised width and the document records the **aspect ratio of the box it was
   drawn in**, so a sketch redraws correctly on a differently shaped screen instead of stretching.
-- Pressure modulates per-segment width where the device reports it. Each segment is drawn separately
-  because a Canvas2D path has one line width for its whole length.
+- Pressure modulates per-segment width where the device reports it. Each segment is drawn
+  separately because a Canvas2D path has one line width for its whole length.
 - Coalesced pointer events are used when available; without them a fast stroke degrades into a
   polygon.
-- **Palm rejection is a heuristic, not a feature.** No target exposes an app-level API — HarmonyOS's
-  `setHandwritingFlag()` is a System API — so once a stylus has been seen, `touch` input is ignored
-  for a short window. It is imperfect, and stated as such in the code.
-- A damaged stroke file yields a note with no ink, never a screen that fails to open; the parser is
-  covered by 16 unit tests.
+- **Palm rejection is a heuristic, not a feature.** No target exposes an app-level API —
+  HarmonyOS's `setHandwritingFlag()` is a System API — so once a stylus has been seen, `touch`
+  input is ignored for a short window. It is imperfect, and stated as such in the code.
+- A damaged stroke file yields a note with no ink, never a screen that fails to open; the parser
+  is covered by 16 unit tests.
 
-Editing is deliberately narrow: a `contenteditable` over **sanitised** HTML, offered only for note
-types this editor can round-trip (`text`, `code`). A `book`, `canvas` or `render` note has structure
-a plain editor would destroy, so those stay read-only.
+Editing is deliberately narrow: a `contenteditable` over **sanitised** HTML, offered only for
+note types this editor can round-trip (`text`, `code`). A `book`, `canvas` or `render` note has
+structure a plain editor would destroy, so those stay read-only.
 
 ### D8 — License: AGPL-3.0-only.
 
 Trilium itself, TriliumDroid, and pocket-trilium are all AGPL-3.0. Porting is permitted, so this
-project is AGPL-3.0-only. Note AGPL §13: running a modified version as a network service triggers the
-corresponding-source obligation. A clean-room implementation would be the only way to avoid this, and
-it is not worth it here.
-
----
+project is AGPL-3.0-only. AGPL §13: running a modified version as a network service triggers the
+corresponding-source obligation. A clean-room implementation would be the only way to avoid this.
 
 ### D9 — The web core cannot call a Trilium server cross-origin. Requests must be same-origin or natively proxied.
 
-**Verified by inspecting the server's headers**, not inferred:
+**Verified by inspecting the server's headers:**
 
 ```
 $ curl -D - http://server/api/setup/status -H "Origin: http://app.example"
@@ -229,27 +234,27 @@ Cross-Origin-Resource-Policy: same-origin
 
 `Cross-Origin-Resource-Policy: same-origin` blocks cross-origin reads outright — a plain
 `mode: "no-cors"` request does not help, and the failure in a browser is an opaque
-`net::ERR_FAILED`, which is exactly what the first browser run produced.
+`net::ERR_FAILED`.
 
 Consequences, in order of preference:
 
-1. **Native shells proxy the API.** The shell intercepts the WebView's `/api/*` requests and performs
-   them natively. This is upstream's own iOS approach (`WKURLSchemeHandler`); HarmonyOS's ArkWeb
-   offers `javaScriptProxy` and the option of an in-app local HTTP server. The WebView then only ever
-   talks to its own origin and never meets the header.
-2. **Serve the app from the server's own origin** — same host, behind the same reverse proxy. Works
-   in any plain browser with no native code.
+1. **Native shells proxy the API.** The shell intercepts the WebView's `/api/*` requests and
+   performs them natively. This is upstream's own iOS approach (`WKURLSchemeHandler`);
+   HarmonyOS's ArkWeb offers `javaScriptProxy` and the option of an in-app local HTTP server.
+   The WebView then only ever talks to its own origin and never meets the header.
+2. **Serve the app from the server's own origin** — same host, behind the same reverse proxy.
+   Works in any plain browser with no native code.
 3. **Development only:** a dev-server proxy (implemented in `apps/web/vite.config.ts`).
 
-What does **not** work is pointing a browser-hosted app at an arbitrary remote Trilium URL, which the
-setup screen now says explicitly instead of failing obscurely.
+What does **not** work is pointing a browser-hosted app at an arbitrary remote Trilium URL,
+which the setup screen says explicitly instead of failing obscurely.
 
 ### D10 — The protocol core must stay platform-neutral.
 
-A rule learned the hard way: the first browser run died on **`Buffer is not defined`**, because the
-journal decode and the push encoder used Node's `Buffer` for base64. Every Node integration test
-passed — Node has `Buffer`. The core therefore uses only the portable helpers in `src/crypto/bytes.ts`
-plus `globalThis.crypto`, and `apps/web` runs it unchanged. Anything Node-only in `src/` is a bug,
+The first browser run failed with **`Buffer is not defined`**, because the journal decode and the
+push encoder used Node's `Buffer` for base64. Node integration tests passed, because Node has
+`Buffer`. The core therefore uses only the portable helpers in `src/crypto/bytes.ts` plus
+`globalThis.crypto`, and `apps/web` runs it unchanged. Anything Node-only in `src/` is a bug,
 not a convenience.
 
 ## 3. Verification performed
@@ -257,11 +262,11 @@ not a convenience.
 Claims in this project are checked against real systems, not against reading alone.
 
 **Crypto primitives** — pure-JS SHA-1, SHA-256, SHA-512, HMAC-SHA-256 and base64 cross-checked
-against `node:crypto` across padding boundaries (0, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129, 1000
-bytes) and published test vectors. 9 tests, all passing.
+against `node:crypto` across padding boundaries (0, 55, 56, 63, 64, 65, 111, 112, 127, 128, 129,
+1000 bytes) and published test vectors. 9 tests, all passing.
 
-**Entity hashes** — recomputed every entity from a real `document.db` and compared against the hash
-Trilium itself recorded in `entity_changes`:
+**Entity hashes** — recomputed every entity from a real `document.db` and compared against the
+hash Trilium itself recorded in `entity_changes`:
 
 | Database | Result |
 |---|---|
@@ -269,13 +274,13 @@ Trilium itself recorded in `entity_changes`:
 | Owner's live 2.6 GB vault, 8 months of history and heavy ETAPI automation | 14 829 / 15 111 (98.1%) |
 
 In the live vault, notes / branches / attributes are **100%**. The residual 282 rows trace to
-`componentId = ReactWrappedWidget-*` (269) — **the owner's own custom scripts**, which write entities
-through a path outside the core protocol — plus 13 local `NA` option/token rows. None are core-path
-discrepancies, and none matter at runtime because of D3.
+`componentId = ReactWrappedWidget-*` (269) — the owner's own custom scripts, which write entities
+through a path outside the core protocol — plus 13 local `NA` option/token rows. None are
+core-path discrepancies, and none matter at runtime because of D3.
 
-**Sync protocol against the owner's production vault** — the objective names a specific self-hosted
-server, so the read-only probe (`tools/probe.ts`, which never calls `transport.update()`) was run
-against it:
+**Sync protocol against the owner's production vault** — the objective names a specific
+self-hosted server, so the read-only probe (`tools/probe.ts`, which never calls
+`transport.update()`) was run against it:
 
 ```
 Server   http://192.0.2.10:8080
@@ -291,15 +296,14 @@ Content hash   local sectors=404  server sectors=404
   PASS — every sector matches the server.
 ```
 
-That is the whole journal of a live vault, folded independently and compared with the server's own
-check: **404 of 404 sectors agree.** It also sizes the first-run experience — 171 seconds for 25,037
-records over a WAN, which is the number a client's initial-sync UI has to be designed around, and it
-confirms the blob policy (D4) empirically: only 73 blobs exceeded the cap, so the other ~6,900 came
-down as content.
+That is the whole journal of a live vault, folded independently and compared with the server's
+own check: **404 of 404 sectors agree.** It also sizes the first-run experience — 171 seconds for
+25,037 records over a WAN — and confirms the blob policy (D4): only 73 blobs exceeded the cap, so
+the other ~6,900 came down as content.
 
-**Sync protocol, against a local Trilium 0.106.0 server** — the full handshake and pull were run and
-the received records were independently folded into per-sector content hashes and compared with the
-server's own `GET /api/sync/check`:
+**Sync protocol, against a local Trilium 0.106.0 server** — the full handshake and pull were run
+and the received records were independently folded into per-sector content hashes and compared
+with the server's own `GET /api/sync/check`:
 
 ```
 Login OK  serverInstanceId=ndC7YDFvZzes  maxEntityChangeId=3,633
@@ -309,13 +313,13 @@ Content hash   local sectors=252  server sectors=252
   PASS -- every sector matches the server.
 ```
 
-Two correctness traps were found only by running it, not by reading:
+Two correctness traps, both visible only by running against real data:
 
-1. **`isErased` is a raw SQLite integer, not a boolean.** Upstream reads it with `getRawRows()`, so
-   the sector string is `hash + "1"`, not `hash + "true"`. Using booleans mismatches **every** sector
-   while every HTTP call still returns 200. Now pinned by a regression test.
-2. **Attachment hashes are ambiguous upstream** (see D3), discoverable only by recomputing hashes
-   from a real vault.
+1. **`isErased` is a raw SQLite integer, not a boolean.** Upstream reads it with `getRawRows()`,
+   so the sector string is `hash + "1"`, not `hash + "true"`. Using booleans mismatches **every**
+   sector while every HTTP call still returns 200. Pinned by a regression test.
+2. **Attachment hashes are ambiguous upstream** (see D3), visible only by recomputing hashes from
+   a real vault.
 
 **HarmonyOS toolchain** — a `.hap` is built from components that require **no Huawei account**:
 
@@ -335,8 +339,8 @@ Built entry-default-unsigned.hap (88,875 bytes)
 Reproduce with `apps/harmony-probe/setup-toolchain.sh && apps/harmony-probe/build.sh`.
 
 **The application, end to end, in a real browser** — `tools/e2e-web.ts` drives the actual UI in
-headless Chrome (390×844, touch, `zh-CN`) against the real server and reads the server's own SQLite
-file to confirm arrival:
+headless Chrome (390×844, touch, `zh-CN`) against the real server and reads the server's own
+SQLite file to confirm arrival:
 
 ```
 [  ok  ] app boots and OPFS + sqlite-wasm initialise
@@ -362,18 +366,18 @@ file to confirm arrival:
 ```
 
 The tablet checks assert the offline-first contract directly: the edit and the ink are visible
-**before** any sync, reported as owed to the server, and only then carried across by the next sync —
-verified by reading the server's file, not by trusting a `204`.
+**before** any sync, reported as owed to the server, and only then carried across by the next
+sync — verified by reading the server's file, not by trusting a `204`.
 
-Three defects were found only by running the UI, none of which any Node test could have caught:
-an unbound `fetch` reference throwing `Illegal invocation` in a worker; `Buffer` being unavailable
-there (D10); and the cross-origin block (D9).
+Three defects appeared only when the UI was run, none of which a Node test could catch: an unbound
+`fetch` reference throwing `Illegal invocation` in a worker; `Buffer` being unavailable there
+(D10); and the cross-origin block (D9).
 
 **Confirmation of the ArkWeb API surface** — read from the SDK's own declarations rather than from
 documentation:
 
-- `WebviewController.enablePrivateNetworkAccess(enable: boolean): void` — **`@since 20`**, confirming
-  it is the API-20 gate the architecture depends on.
+- `WebviewController.enablePrivateNetworkAccess(enable: boolean): void` — **`@since 20`**,
+  confirming it is the API-20 gate the architecture depends on.
 - The `Web` component provides `javaScriptProxy`, `onControllerAttached`, `mixedMode`,
   `domStorageAccess`, `databaseAccess`, `fileAccess` — everything D1 needs for a shell.
 
@@ -397,69 +401,68 @@ documentation:
 
 **Blocking, needs a human**
 
-1. **Can the owner complete Huawei 实名认证 (*real-name verification*) and register a debug device?** Without it there is no
-   on-device testing and no AppGallery publishing. Unverified for non-Chinese developers.
-   Confirmed: the **HarmonyOS** SDK download itself is account-gated (its API chain runs through
-   `getToolVersionDownloadUrl` + `signAgreement` + `querySign`), and automatic signing is GUI-only.
-2. **Does the DevEco emulator work on this M4 / macOS 26.7.1?** Community reports conflict. If not,
-   hardware must be procured.
+1. **Can the owner complete Huawei 实名认证 (*real-name verification*) and register a debug
+   device?** Without it there is no on-device testing and no AppGallery publishing. Unverified for
+   non-Chinese developers. The **HarmonyOS** SDK download itself is account-gated (its API chain
+   runs through `getToolVersionDownloadUrl` + `signAgreement` + `querySign`), and automatic
+   signing is GUI-only.
+2. **Does the DevEco emulator work on this M4 / macOS 26.7.1?** Community reports conflict. If
+   not, hardware must be procured.
 
 Note that a `.hap` **build** no longer depends on either of these — see §3.
 
-**Answered — measured on a HarmonyOS emulator**
+**Answered — measured on a HarmonyOS API 26 emulator** (detail in
+[harmonyos.md](../harmonyos.md))
 
-Items 3–5 were the open questions this ADR listed. All three are now resolved by running the probe on
-a real HarmonyOS API 26 device; full detail in `docs/harmonyos-verified.md`.
+3. **`pointerType === "pen"` — unproven, and the only item left.** An emulator has no stylus.
+   ArkWeb ships the complete pen-capable Pointer Events surface: `getCoalescedEvents`,
+   `getPredictedEvents`, `onpointerrawupdate` and `maxTouchPoints: 10` are all present.
+4. **LAN cleartext `fetch` — works.** `http://192.168.3.213:18899/` returned **200 in 6 ms** from
+   the emulator, over plain HTTP, with no cleartext configuration of any kind. The research's
+   claim that cleartext is blocked by default does not hold.
+   `enablePrivateNetworkAccess(false)` is doing its job: a private-network address was reachable.
+5. **IndexedDB quota — 3.42 GB.** The vault's 18.3 MB of text fits with three orders of magnitude
+   to spare (D4).
 
-3. **`pointerType === "pen"` — still unproven, and the only thing left.** An emulator has no stylus.
-   What *is* proven is that ArkWeb ships the complete pen-capable Pointer Events surface:
-   `getCoalescedEvents`, `getPredictedEvents`, `onpointerrawupdate` and `maxTouchPoints: 10` all
-   present. Likely to work; not yet evidence.
-4. **LAN cleartext `fetch` — works.** `http://192.168.3.213:18899/` returned **200 in 6 ms** from the
-   emulator, over plain HTTP, with no cleartext configuration of any kind. The research's claim that
-   cleartext is blocked by default **does not hold**. `enablePrivateNetworkAccess(false)` is doing its
-   job: a private-network address was reachable.
-5. **IndexedDB quota — 3.42 GB.** The vault's 18.3 MB of text fits with three orders of magnitude to
-   spare (D4).
-
-The research also needs two corrections, both measured: **ArkWeb is Chromium 144**, not M132, and the
-**File System Access API is supported**, contrary to the advice to assume otherwise. `navigator.share`
+Two research corrections, both measured: **ArkWeb is Chromium 144**, not M132, and the **File
+System Access API is supported**, contrary to the advice to assume otherwise. `navigator.share`
 and `Notification` are the two genuine gaps, the former relevant to share-into-Trilium capture.
 
-**The real obstacle is not the platform.** The same probe found that the WebView *cannot* reach a
-self-hosted Trilium server directly — not because of anything HarmonyOS does, but because the server
-sends `Cross-Origin-Resource-Policy: same-origin` and no CORS headers, exactly as measured in D9 on the
-desktop. A control request to a CORS-permitting host on the same LAN and the same port scheme returned
-200, so network, cleartext and the private-network gate are all fine. **D9's remedy is therefore the
-HarmonyOS remedy too: the ArkTS shell must proxy API calls natively (option 1), or the app must be
-served same-origin (option 2).** `enablePrivateNetworkAccess(false)` is necessary but nowhere near
+**The real obstacle is not the platform.** The same probe found that the WebView cannot reach a
+self-hosted Trilium server directly — not because of anything HarmonyOS does, but because the
+server sends `Cross-Origin-Resource-Policy: same-origin` and no CORS headers, exactly as measured
+in D9. A control request to a CORS-permitting host on the same LAN and the same port scheme
+returned 200, so network, cleartext and the private-network gate are all fine. **D9's remedy is
+therefore the HarmonyOS remedy too: the ArkTS shell proxies API calls natively (option 1), or the
+app is served same-origin (option 2).** `enablePrivateNetworkAccess(false)` is necessary but not
 sufficient.
 
 **Blocking, needs a human**
 
-6. **A physical HarmonyOS device with a stylus**, and a Huawei account to sign for it, to settle item 3.
+6. **A physical HarmonyOS device with a stylus**, and a Huawei account to sign for it, to settle
+   item 3.
 
 **Design risks**
 
-6. **Protocol version pinning.** `syncVersion` is a bare equality check with no negotiation —
-   the server hard-rejects a mismatch with a 400 and there is no fallback. The released 0.106.0 image
+7. **Protocol version pinning.** `syncVersion` is a bare equality check with no negotiation — the
+   server hard-rejects a mismatch with a 400 and there is no fallback. The released 0.106.0 image
    reports **39**; `main` reports 40. The client must read it and fail with a clear message.
-7. **Tombstones are never garbage-collected** and are folded into the content hash, so a fresh client
-   replays all history. For this vault that is 24 936 rows (11.6% tombstones), which is comfortably
+8. **Tombstones are never garbage-collected** and are folded into the content hash, so a fresh
+   client replays all history. For this vault that is 24,936 rows (11.6% tombstones), which is
    feasible — but first sync must still be resumable and chunked from day one.
-8. **Clock skew > 5 minutes fails sync login** with a 401 that says nothing about credentials.
+9. **Clock skew > 5 minutes fails sync login** with a 401 that says nothing about credentials.
+   The transport measures the offset from the response `Date` header and retries once.
 
 ---
 
 ## 6. Consequences
 
-- The sync engine, hashing, and storage are **testable on this Mac today**, in Node and in a browser,
-  with no mobile toolchain. That is why D1/D2 were chosen.
+- The sync engine, hashing, and storage are **testable on this Mac today**, in Node and in a
+  browser, with no mobile toolchain. That is why D1/D2 were chosen.
 - All platform-specific work is confined to thin shells and one ArkTS handwriting field.
 - The project must ship under AGPL-3.0.
-- The three "measure on real hardware" items in §5 should be resolved before any HarmonyOS polish;
-  if item 4 fails, ink annotation and freeform drawing need a native overlay per platform, which is a
-  materially larger plan.
+- Item 3 in §5 (stylus) remains open; if `pointerType === "pen"` does not hold, ink annotation and
+  freeform drawing need a native overlay per platform, which is a materially larger plan.
 
 ## 7. References
 
