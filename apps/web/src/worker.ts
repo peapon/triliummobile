@@ -199,6 +199,13 @@ function ensureInbox(): string {
     return String(existing.noteId);
   }
 
+  // Nothing found locally — but that is also what an *incomplete* replica looks like. Creating an
+  // inbox before the first pull has run put a duplicate "速记 Inbox" into the vault on every fresh
+  // install, and then the 速记 list showed that empty one instead of the notes.
+  if (store.lastSyncedPull === 0) {
+    throw new Error("首次同步尚未完成，稍后再试");
+  }
+
   const created = store.createTextNote({
     parentNoteId: ROOT_NOTE_ID,
     title: "速记 Inbox",
@@ -454,6 +461,8 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return queries.getNote(request.params[0]);
     case "search":
       return queries.search(request.params[0], request.params[1] ?? 40);
+    case "recentQuickNotes":
+      return queries.recentQuickNotes(request.params[0], request.params[1]);
     case "recent":
       return queries.recent(request.params[0] ?? 30);
     case "notesOfType":

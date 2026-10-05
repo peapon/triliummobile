@@ -19,6 +19,8 @@ export interface NoteSummary {
   mime: string;
   isDeleted: number;
   utcDateModified: string;
+  /** When the note was made. The quick-note list is ordered by this, not by last touch. */
+  utcDateCreated: string;
   parentNoteId: string | null;
   /**
    * How many notes sit under this one.
@@ -72,7 +74,7 @@ export class NoteQueries {
 
   childrenOf(parentNoteId: string): NoteSummary[] {
     return this.db.all<NoteSummary>(
-      `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
+      `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
               b.parentNoteId AS parentNoteId,
               ${NoteQueries.CHILD_COUNT} AS childCount,
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
@@ -134,11 +136,12 @@ export class NoteQueries {
       blobId: string | null;
       isDeleted: number;
       utcDateModified: string;
+      utcDateCreated: string;
       parentNoteId: string | null;
       childCount: number;
       iconClass: string | null;
       color: string | null;
-    }>(`SELECT n.noteId, n.title, n.type, n.mime, n.blobId, n.isDeleted, n.utcDateModified,
+    }>(`SELECT n.noteId, n.title, n.type, n.mime, n.blobId, n.isDeleted, n.utcDateModified, n.utcDateCreated,
                       (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
                       ${NoteQueries.CHILD_COUNT} AS childCount,
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
@@ -199,7 +202,7 @@ export class NoteQueries {
     const like = `%${escapeLike(needle)}%`;
 
     return this.db.all<NoteSummary>(
-      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
+      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
               ${NoteQueries.CHILD_COUNT} AS childCount,
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
@@ -223,7 +226,7 @@ export class NoteQueries {
    */
   notesOfType(type: string, limit = 40): NoteSummary[] {
     return this.db.all<NoteSummary>(
-      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
+      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
               ${NoteQueries.CHILD_COUNT} AS childCount,
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
@@ -236,9 +239,39 @@ export class NoteQueries {
     );
   }
 
+  /**
+   * The quick-note list: what this device made, newest first.
+   *
+   * Scoped to the inbox's own subtree rather than the whole vault, and capped. "速记" is one place,
+   * not "everything you touched lately" — the library tab is where the vault is browsed.
+   *
+   * Ordered by `utcDateCreated`: a quick note is written once and rarely reopened, so the order it
+   * was written in is the order it is wanted in. Ordering by last-modified would reshuffle the list
+   * whenever an old note was opened.
+   */
+  recentQuickNotes(inboxNoteId: string, limit = 50): NoteSummary[] {
+    return this.db.all<NoteSummary>(
+      `WITH RECURSIVE subtree(noteId) AS (
+         SELECT ?
+         UNION
+         SELECT b.noteId FROM branches b JOIN subtree s ON b.parentNoteId = s.noteId WHERE b.isDeleted = 0
+       )
+       SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+              (SELECT COUNT(*) FROM branches cb WHERE cb.parentNoteId = n.noteId AND cb.isDeleted = 0) AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
+         FROM notes n
+        WHERE n.isDeleted = 0 AND n.noteId IN (SELECT noteId FROM subtree) AND n.noteId != ?
+        ORDER BY n.utcDateCreated DESC
+        LIMIT ?`,
+      [inboxNoteId, inboxNoteId, limit]
+    );
+  }
+
   recent(limit = 40): NoteSummary[] {
     return this.db.all<NoteSummary>(
-      `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
+      `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
               ${NoteQueries.CHILD_COUNT} AS childCount,
               ${NoteQueries.LABEL("iconClass")} AS iconClass,

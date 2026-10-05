@@ -36,6 +36,9 @@ type SortKey = "modified" | "created" | "title";
 /** Bottom sheets, the reference's pattern for options and for creating. */
 type Sheet = "none" | "view";
 
+/** How many quick notes the 速记 list shows. The rest are reachable through the library. */
+const QUICK_NOTE_LIMIT = 50;
+
 interface AppState {
   tab: Tab;
   query: string;
@@ -678,9 +681,14 @@ async function renderView(): Promise<string> {
  * spent a third of the screen on chrome before a single character was typed.
  */
 async function renderNotes(): Promise<string> {
-  const notes = sortNotes(await api.recent(60));
-  const counts = await api.counts();
-
+  // The inbox subtree, newest created first, at most 50 — see `recentQuickNotes`. The inbox cannot
+  // be resolved until a sync has run, and saying so beats an empty list that looks like lost notes.
+  let notes: NoteSummary[] = [];
+  try {
+    notes = await api.recentQuickNotes(await api.inboxNoteId(), QUICK_NOTE_LIMIT);
+  } catch {
+    return `<div class="empty">首次同步完成后，速记会显示在这里。</div>`;
+  }
   const empty = `
     <div class="empty">
       还没有笔记。<br />点上面的输入框记第一条。
@@ -689,7 +697,7 @@ async function renderNotes(): Promise<string> {
   return `
     <div class="section-head">
       <span>最近</span>
-      <span class="section-count">${counts.notes.toLocaleString("en-US")} 条</span>
+      <span class="section-count">${notes.length}${notes.length >= QUICK_NOTE_LIMIT ? "+" : ""} 条</span>
     </div>
 
     ${notes.length === 0 ? empty : renderNoteCollection(notes, "notes")}

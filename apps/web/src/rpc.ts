@@ -50,6 +50,8 @@ export interface AppApi {
   breadcrumb(noteId: string): Promise<Array<{ noteId: string; title: string }>>;
   getNote(noteId: string): Promise<NoteDetail | null>;
   search(query: string, limit?: number): Promise<NoteSummary[]>;
+  /** The 速记 list: the inbox subtree, newest created first, capped. */
+  recentQuickNotes(inboxNoteId: string, limit?: number): Promise<NoteSummary[]>;
   recent(limit?: number): Promise<NoteSummary[]>;
   /** Notes of one Trilium type, for the AI chat list. */
   notesOfType(type: string, limit?: number): Promise<NoteSummary[]>;
@@ -203,6 +205,8 @@ export class WorkerClient implements AppApi {
   breadcrumb = (noteId: string) => this.call("breadcrumb", noteId);
   getNote = (noteId: string) => this.call("getNote", noteId);
   search = (query: string, limit?: number) => this.call("search", query, limit);
+  recentQuickNotes = (inboxNoteId: string, limit?: number) =>
+    this.call("recentQuickNotes", inboxNoteId, limit);
   recent = (limit?: number) => this.call("recent", limit);
   notesOfType = (type: string, limit?: number) => this.call("notesOfType", type, limit);
 
