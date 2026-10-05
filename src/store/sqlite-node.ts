@@ -36,6 +36,10 @@ export class NodeSqliteDatabase implements SqlDatabase {
     return this.db.prepare(sql).all(...(params as never[])) as T[];
   }
 
+  registerFunction(name: string, fn: (...args: unknown[]) => unknown): void {
+    this.db.function(name, fn as never);
+  }
+
   exec(sql: string): void {
     this.db.exec(sql);
   }

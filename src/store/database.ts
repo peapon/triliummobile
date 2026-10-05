@@ -26,6 +26,14 @@ export interface SqlDatabase {
   /** Run one or more statements, discarding results. Used for schema creation. */
   exec(sql: string): void;
 
+  /**
+   * Register a scalar SQL function.
+   *
+   * Both engines expose this under a different name (`node:sqlite` takes `function`, sqlite-wasm
+   * takes `createFunction`), which is what the adapter is for.
+   */
+  registerFunction(name: string, fn: (...args: unknown[]) => unknown): void;
+
   /** Run `fn` inside a transaction, rolling back if it throws. */
   transaction<T>(fn: () => T): T;
 

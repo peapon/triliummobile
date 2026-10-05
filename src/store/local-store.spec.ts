@@ -49,6 +49,10 @@ class MemoryDatabase implements SqlDatabase {
     return this.raw.prepare(sql).all(...(params as never[])) as T[];
   }
 
+  registerFunction(): void {
+    // The in-memory stand-in has no SQL engine; `strip_tags` is exercised against the real one.
+  }
+
   exec(sql: string): void {
     this.raw.exec(sql);
   }

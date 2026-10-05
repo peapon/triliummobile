@@ -78,7 +78,13 @@ export class LocalStore {
     private readonly db: SqlDatabase,
     /** This installation's 12-character id, used to stamp changes we originate. */
     private readonly instanceId: string = randomString(12)
-  ) {}
+  ) {
+    // Search matches a note's *text*, not its mark-up: a query for "div" matched 42 notes by finding
+    // `<div>`, and not one of them had it in the title. `LIKE` cannot skip tags on its own.
+    db.registerFunction("strip_tags", (html) =>
+      typeof html === "string" ? html.replace(/<[^>]*>/g, " ") : ""
+    );
+}
 
   get localInstanceId(): string {
     return this.instanceId;

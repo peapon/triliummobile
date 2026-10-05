@@ -23,6 +23,7 @@ import type { SqlDatabase, SqlValue } from "./database.js";
 
 /** The subset of sqlite3's oo1 API this adapter uses. */
 interface Oo1Database {
+  createFunction(name: string, fn: (...args: never[]) => unknown): unknown;
   exec(sql: string): unknown;
   exec(options: {
     sql: string;
@@ -66,6 +67,11 @@ export class SqliteWasmDatabase implements SqlDatabase {
       rowMode: "object",
       returnValue: "resultRows"
     }) as T[];
+  }
+
+  registerFunction(name: string, fn: (...args: unknown[]) => unknown): void {
+    // sqlite-wasm hands the function a context pointer first, then the arguments.
+    this.db.createFunction(name, (_ctx: number, ...args: unknown[]) => fn(...args) as never);
   }
 
   exec(sql: string): void {

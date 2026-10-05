@@ -8,7 +8,7 @@
 
 import { isStubContent } from "../../../src/store/local-store.js";
 import { EMPTY_BLOB_ID } from "../../../src/store/schema.js";
-import type { SqlDatabase } from "../../../src/store/database.js";
+import type { SqlDatabase, SqlValue } from "../../../src/store/database.js";
 
 export const ROOT_NOTE_ID = "root";
 
@@ -203,13 +203,52 @@ export class NoteQueries {
    * Content lives in `blobs` as either TEXT or BLOB depending on how it was written, so the
    * comparison casts explicitly rather than relying on either storage class.
    */
+  /**
+   * Search the replica.
+   *
+   * Trilium's own semantics, which this gets wrong in four ways if done naively:
+   *
+   * 1. **Words, not one string.** `rings tolkien` means notes containing *both*. Only a quoted
+   *    `"exact phrase"` is matched as a phrase. Matching the whole query as one substring finds
+   *    almost nothing.
+   * 2. **A title hit is worth far more than a body hit.** It used to order by last modified, so a
+   *    note that merely *mentions* the word outranked a note *named* it: searching "Trilium" put
+   *    "AI Chat History" and "Trilium Demo" below eight notes whose text happened to contain the
+   *    word.
+   * 3. **Recency only breaks ties.**
+   * 4. Content is HTML, so a match inside a tag is not a match in the note's text. Tags are stripped
+   *    for the content test; see `stripTags`.
+   *
+   * The term must appear in the title or in the text — `LIKE` on the stripped text, not on the raw
+   * mark-up.
+   */
   search(query: string, limit = 40): NoteSummary[] {
-    // Trilium's search syntax is a language of its own; this is deliberately the plain-substring
-    // subset the phone needs, and it is applied locally so it works offline.
-    const needle = query.trim();
-    if (needle === "") return this.recent(limit);
+    const trimmed = query.trim();
+    if (trimmed === "") return this.recent(limit);
 
-    const like = `%${escapeLike(needle)}%`;
+    // A quoted run is one exact term; everything else is split on whitespace.
+    const phrases = [...trimmed.matchAll(/"([^"]+)"/g)].map((m) => m[1]!);
+    const bare = trimmed.replace(/"[^"]*"/g, " ").trim();
+    const terms = [...phrases, ...(bare ? bare.split(/\s+/).filter(Boolean) : [])];
+
+    if (terms.length === 0) return this.recent(limit);
+
+    const like = (term: string) => `%${escapeLike(term)}%`;
+
+    // Every term has to be present, in either the title or the text.
+    const where = terms
+      .map(() => `(n.title LIKE ? ESCAPE '\\' OR strip_tags(CAST(b.content AS TEXT)) LIKE ? ESCAPE '\\')`)
+      .join("\n          AND ");
+
+    // A term found in the title counts for much more than one found only in the body.
+    const score = terms
+      .map(() => `(CASE WHEN n.title LIKE ? ESCAPE '\\' THEN 10 ELSE 0 END)`)
+      .join(" + ");
+
+    const params: SqlValue[] = [];
+    for (const term of terms) params.push(like(term), like(term));
+    for (const term of terms) params.push(like(term));
+    params.push(limit);
 
     return this.db.all<NoteSummary>(
       `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
@@ -221,32 +260,10 @@ export class NoteQueries {
          LEFT JOIN blobs b ON b.blobId = n.blobId
         WHERE n.isDeleted = 0
           AND ${NoteQueries.NOT_HIDDEN}
-          AND (n.title LIKE ? ESCAPE '\\'
-               OR CAST(b.content AS TEXT) LIKE ? ESCAPE '\\')
-        ORDER BY n.utcDateModified DESC
+          AND ${where}
+        ORDER BY (${score}) DESC, n.utcDateModified DESC
         LIMIT ?`,
-      [like, like, limit]
-    );
-  }
-
-  /**
-   * Notes of one Trilium type, most recently modified first.
-   *
-   * Used to find `llmChat` notes. Reads only what sync already stored — the AI chats are ordinary
-   * notes in the tree, under a special `_llmChat` ancestor the server manages.
-   */
-  notesOfType(type: string, limit = 40): NoteSummary[] {
-    return this.db.all<NoteSummary>(
-      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
-              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
-              ${NoteQueries.CHILD_COUNT} AS childCount,
-              ${NoteQueries.LABEL("iconClass")} AS iconClass,
-              ${NoteQueries.LABEL("color")} AS color
-         FROM notes n
-        WHERE n.isDeleted = 0 AND n.type = ? AND ${NoteQueries.NOT_HIDDEN}
-        ORDER BY n.utcDateModified DESC
-        LIMIT ?`,
-      [type, limit]
+      params
     );
   }
 
@@ -278,6 +295,27 @@ export class NoteQueries {
         ORDER BY n.utcDateCreated DESC
         LIMIT ?`,
       [inboxNoteId, inboxNoteId, limit]
+    );
+  }
+
+  /**
+   * Notes of one Trilium type, most recently modified first.
+   *
+   * Used to find `llmChat` notes. Reads only what sync already stored — the AI chats are ordinary
+   * notes in the tree, under a special `_llmChat` ancestor the server manages.
+   */
+  notesOfType(type: string, limit = 40): NoteSummary[] {
+    return this.db.all<NoteSummary>(
+      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified, n.utcDateCreated,
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+              ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
+         FROM notes n
+        WHERE n.isDeleted = 0 AND n.type = ? AND ${NoteQueries.NOT_HIDDEN}
+        ORDER BY n.utcDateModified DESC
+        LIMIT ?`,
+      [type, limit]
     );
   }
 
