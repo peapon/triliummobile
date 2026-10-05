@@ -215,6 +215,37 @@ function ensureInbox(): string {
  * The password is used exactly once, to read the seed. Upstream's HMAC login never sees it — which
  * is also why TOTP cannot be enforced on the sync path at all.
  */
+/**
+ * Explain a connection failure in terms of its actual cause.
+ *
+ * A browser cannot read the Trilium API on another origin — the server sends
+ * `Cross-Origin-Resource-Policy: same-origin` and no CORS headers — and the failure surfaces as a
+ * bare `TypeError: Failed to fetch`, which reads like the server is down. It never is; the measured
+ * case was a healthy server refusing a cross-origin read. Inside the shell the request goes out
+ * natively, so the constraint does not apply.
+ */
+function explainConnectionFailure(host: string, error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error);
+
+  if (useNativeHttp) return new Error(message);
+
+  try {
+    const target = new URL(host);
+    if (target.origin !== self.location.origin) {
+      return new Error(
+        `浏览器无法跨源连接 ${target.origin}：Trilium 返回 Cross-Origin-Resource-Policy: same-origin ` +
+          `且不带 CORS 头，浏览器会直接拒绝，而不是连不上。` +
+          `请用鸿蒙 App（原生转发请求），或把本应用部署到与服务端同源的位置。` +
+          `（原始错误：${message}）`
+      );
+    }
+  } catch {
+    // An unparseable host has already been reported by `normaliseHost`.
+  }
+
+  return new Error(message);
+}
+
 async function configure(serverHost: string, password: string): Promise<void> {
   const probe = new SyncTransport({
     serverHost,
@@ -222,13 +253,20 @@ async function configure(serverHost: string, password: string): Promise<void> {
     syncVersion: 0,
     ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
   });
-  const status = await probe.getSetupStatus();
+  let status: { isInitialized: boolean; syncVersion: number };
+  let seed;
 
-  if (!status.isInitialized) {
-    throw new Error("该服务端尚未初始化，请先在浏览器里完成一遍 Trilium 初始化。");
+  try {
+    status = await probe.getSetupStatus();
+
+    if (!status.isInitialized) {
+      throw new Error("该服务端尚未初始化，请先在浏览器里完成一遍 Trilium 初始化。");
+    }
+
+    seed = await probe.fetchSyncSeed(password);
+  } catch (error) {
+    throw explainConnectionFailure(serverHost, error);
   }
-
-  const seed = await probe.fetchSyncSeed(password);
   const documentId = seed.options.find((option) => option.name === "documentId")?.value;
   const documentSecret = seed.options.find((option) => option.name === "documentSecret")?.value;
 

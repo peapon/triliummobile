@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { hmacSha256Base64 } from "../crypto/index.js";
-import { SyncTransport, utcDateTimeStr } from "./transport.js";
+import { normaliseHost, SyncTransport, utcDateTimeStr } from "./transport.js";
 
 /**
  * The login handshake's clock handling.
@@ -136,6 +136,44 @@ describe("sync login under clock skew", () => {
     // A wrong documentSecret must not be retried: it will never succeed, and the retry would double
     // the failed login attempts the server rate-limits.
     expect(captured).toHaveLength(1);
+  });
+});
+
+describe("normalising the server address", () => {
+  it("adds a scheme when the user leaves it off", () => {
+    // Without this the host parses as a *relative* path and every request goes to
+    // `<page origin>/114.66.28.183:29050/api/...`, which fails in a way that blames the network.
+    expect(normaliseHost("114.66.28.183:29050")).toBe("http://114.66.28.183:29050");
+    expect(normaliseHost("192.168.1.10:8080")).toBe("http://192.168.1.10:8080");
+    expect(normaliseHost("trilium.example.com")).toBe("http://trilium.example.com");
+  });
+
+  it("keeps an explicit scheme, including https", () => {
+    expect(normaliseHost("https://trilium.example.com")).toBe("https://trilium.example.com");
+    expect(normaliseHost("http://10.0.0.5:8080")).toBe("http://10.0.0.5:8080");
+  });
+
+  it("trims what a paste drags along", () => {
+    expect(normaliseHost("  http://114.66.28.183:29050  ")).toBe("http://114.66.28.183:29050");
+    expect(normaliseHost("http://114.66.28.183:29050\n")).toBe("http://114.66.28.183:29050");
+  });
+
+  it("drops trailing slashes so paths do not double up", () => {
+    expect(normaliseHost("http://host:8080/")).toBe("http://host:8080");
+    expect(normaliseHost("http://host:8080///")).toBe("http://host:8080");
+  });
+
+  it("refuses an address it cannot use, saying why", () => {
+    expect(() => normaliseHost("")).toThrow(/为空/);
+    expect(() => normaliseHost("   ")).toThrow(/为空/);
+    expect(() => normaliseHost("ftp://host")).toThrow(/http 或 https/);
+  });
+
+  it("builds a URL a fetch can actually use", () => {
+    for (const input of ["114.66.28.183:29050", "http://114.66.28.183:29050", "http://114.66.28.183:29050/"]) {
+      const url = new URL(`${normaliseHost(input)}/api/setup/status`);
+      expect(url.origin).toBe("http://114.66.28.183:29050");
+    }
   });
 });
 

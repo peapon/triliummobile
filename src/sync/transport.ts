@@ -61,8 +61,41 @@ export function randomString(length: number): string {
   return out;
 }
 
-function normaliseHost(host: string): string {
-  return host.replace(/\/+$/, "");
+/**
+ * Turn whatever the user typed into a usable base URL, or refuse with a reason.
+ *
+ * Two mistakes were common enough to be worth handling rather than failing on:
+ *
+ * - **No scheme.** `114.66.28.183:29050` is not a URL with a host; `new URL` reads the dotted
+ *   numeric prefix as a (invalid) scheme and treats the whole thing as a *relative* path. The
+ *   request then goes to `<page origin>/114.66.28.183:29050/api/...`, which fails in a way that says
+ *   nothing about the address. Defaulting to `http://` matches what a self-hosted Trilium almost
+ *   always is.
+ * - **Stray whitespace.** Pasting an address usually brings a trailing space or newline with it, and
+ *   an untrimmed one produces an invalid URL.
+ *
+ * A wrong address should say so, not look like a network outage.
+ */
+export function normaliseHost(host: string): string {
+  const trimmed = host.trim();
+  if (trimmed === "") throw new SyncError("服务端地址为空");
+
+  const withScheme = /^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed) ? trimmed : `http://${trimmed}`;
+  const withoutTrailingSlash = withScheme.replace(/\/+$/, "");
+
+  let parsed: URL;
+  try {
+    parsed = new URL(withoutTrailingSlash);
+  } catch {
+    throw new SyncError(`服务端地址无法解析：${trimmed}`);
+  }
+
+  if (!parsed.hostname) throw new SyncError(`服务端地址缺少主机名：${trimmed}`);
+  if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+    throw new SyncError(`服务端地址必须是 http 或 https：${trimmed}`);
+  }
+
+  return withoutTrailingSlash;
 }
 
 /** Shape of `GET /api/{notes,attachments}/{id}/blob`. */
