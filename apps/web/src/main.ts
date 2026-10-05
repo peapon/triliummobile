@@ -1703,17 +1703,19 @@ async function saveFromEditor(): Promise<void> {
           bytes: await readBytes(file)
         });
 
-        // Two different endpoints. `/image/` refuses anything whose role is not `image` — the server
-        // answers "has role 'file', but a picture was expected" — so a PDF has to use `/download`.
-        const href = mime.startsWith("image/")
-          ? `api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}`
-          : `api/attachments/${attached.attachmentId}/download`;
-
-        references.push(
-          mime.startsWith("image/")
-            ? `<p><img src="${href}"></p>`
-            : `<p><a href="${href}">${escapeHtml(file.name)}</a></p>`
-        );
+        // Only a picture goes into the text. Trilium's own attach-file flow inserts nothing at all —
+        // `copyAttachmentReference` merely copies a link to the clipboard — and an attachment shows
+        // in the attachment panel. Writing a link into the body was a deviation, and a harmful one:
+        // a stored relative URL can be absolutised by another client against an empty base, which is
+        // how `https://api/attachments/<id>/download` ended up *inside* a note and broken everywhere.
+        //
+        // The picture form is kept because it works, and because a picture inside the note is what a
+        // picture is for. It also uses `/image/`, which is the endpoint that accepts an image.
+        if (mime.startsWith("image/")) {
+          references.push(
+            `<p><img src="api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}"></p>`
+          );
+        }
       }
 
       await api.updateNoteContent(
