@@ -49,6 +49,8 @@ export default class EntryAbility extends UIAbility {
   onBackPressed(): boolean {
     // Ask the page, not the WebView. The page knows whether a dialog, a note or a folder is open;
     // the WebView only knows about document navigations, and this app has none.
+    hilog.info(DOMAIN, TAG, "onBackPressed: backEnabled=%{public}s", String(ShellState.backEnabled));
+
     if (ShellState.backEnabled && ShellState.controller) {
       ShellState.controller.runJavaScript("window.__triliumBack && window.__triliumBack()");
       return true;

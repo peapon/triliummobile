@@ -1896,23 +1896,21 @@ async function addAttachmentToOpenNote(): Promise<void> {
  */
 async function rewriteAttachmentUrls(html: string): Promise<string> {
   // `src` for a picture, `href` for anything else — both point at the API, and both have to be
-  // resolved locally or they leave the app. Matching only `src` left every file link pointing at a
-  // route this client does not serve.
-  const matches = [...html.matchAll(/(src|href)="api\/attachments\/([A-Za-z0-9]+)\//g)];
+  // resolved locally or they leave the app.
+  //
+  // The whole reference is consumed, not just its prefix. Replacing only `api/attachments/<id>/`
+  // left the tail of the URL behind and produced `data:application/pdf;base64,…#download`: an image
+  // still loaded because a browser ignores a fragment it does not know, but the link was broken.
+  const pattern = /(src|href)="api\/attachments\/([A-Za-z0-9]+)\/[^"]*"/g;
+  const matches = [...html.matchAll(pattern)];
   if (matches.length === 0) return html;
 
   let out = html;
   for (const match of matches) {
-    const attribute = match[1]!;
-    const attachmentId = match[2]!;
-
-    const dataUrl = await api.attachmentDataUrl(attachmentId);
+    const dataUrl = await api.attachmentDataUrl(match[2]!);
     if (!dataUrl) continue;
 
-    out = out.replaceAll(
-      `${attribute}="api/attachments/${attachmentId}/`,
-      `${attribute}="${dataUrl}#`
-    );
+    out = out.replace(match[0]!, `${match[1]!}="${dataUrl}"`);
   }
 
   return out;

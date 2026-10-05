@@ -121,6 +121,7 @@ export class ApiProxy {
    */
   setBackEnabled(enabled: boolean): void {
     ShellState.backEnabled = enabled === true;
+    hilog.info(DOMAIN, TAG, "page says backEnabled=%{public}s", String(ShellState.backEnabled));
   }
 
   reset(): void {
