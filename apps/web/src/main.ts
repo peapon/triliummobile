@@ -764,9 +764,17 @@ function renderNoteCard(note: NoteSummary, context: "notes" | "library"): string
   const className = state.layout === "grid" ? "card" : "row";
   const target = descends ? `data-into="${note.noteId}"` : `data-open="${note.noteId}"`;
 
+  // Trilium's own icon when the note carries one, otherwise the generic mark for its type. Colour
+  // is the note's `color` label, which is a hex value.
+  const mark = note.iconClass
+    ? `<i class="${escapeAttr(note.iconClass)}" aria-hidden="true"></i>`
+    : icon(kind);
+
+  const tint = note.color ? ` style="color:${escapeAttr(note.color)}"` : "";
+
   return `
     <button class="${className}" ${target} data-note-id="${note.noteId}">
-      <span class="note-icon">${icon(kind)}</span>
+      <span class="note-icon"${tint}>${mark}</span>
       <span class="note-text">
         <span class="title">${escapeHtml(note.title || "无标题")}</span>
         <span class="meta">${escapeHtml(describeNote(note, descends))}</span>

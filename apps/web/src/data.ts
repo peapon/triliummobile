@@ -28,6 +28,15 @@ export interface NoteSummary {
    * parents were books — so a type check strands every level below the second.
    */
   childCount: number;
+  /**
+   * Trilium's own `iconClass` label — a boxicons class such as `bx bx-bot`.
+   *
+   * A real vault uses hundreds of them (222 distinct in the test vault), which is why the icon font
+   * is bundled rather than hand-mapped to a small inline set.
+   */
+  iconClass: string | null;
+  /** Trilium's `color` label: a hue, 1–9. */
+  color: string | null;
 }
 
 export interface NoteDetail extends NoteSummary {
@@ -56,11 +65,18 @@ export class NoteQueries {
   private static readonly CHILD_COUNT =
     "(SELECT COUNT(*) FROM branches cb WHERE cb.parentNoteId = n.noteId AND cb.isDeleted = 0)";
 
+  /** The note's own icon and colour, as Trilium stores them: labels called `iconClass` and `color`. */
+  private static readonly LABEL = (name: string) =>
+    `(SELECT a.value FROM attributes a WHERE a.noteId = n.noteId AND a.type = 'label'` +
+    ` AND a.name = '${name}' AND a.isDeleted = 0 LIMIT 1)`;
+
   childrenOf(parentNoteId: string): NoteSummary[] {
     return this.db.all<NoteSummary>(
       `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
               b.parentNoteId AS parentNoteId,
-              ${NoteQueries.CHILD_COUNT} AS childCount
+              ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
          FROM branches b
          JOIN notes n ON n.noteId = b.noteId
         WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0
@@ -120,9 +136,13 @@ export class NoteQueries {
       utcDateModified: string;
       parentNoteId: string | null;
       childCount: number;
+      iconClass: string | null;
+      color: string | null;
     }>(`SELECT n.noteId, n.title, n.type, n.mime, n.blobId, n.isDeleted, n.utcDateModified,
                       (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
-                      ${NoteQueries.CHILD_COUNT} AS childCount
+                      ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
                  FROM notes n WHERE n.noteId = ?`, [
       noteId
     ]);
@@ -181,7 +201,9 @@ export class NoteQueries {
     return this.db.all<NoteSummary>(
       `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
-              ${NoteQueries.CHILD_COUNT} AS childCount
+              ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
          FROM notes n
          LEFT JOIN blobs b ON b.blobId = n.blobId
         WHERE n.isDeleted = 0
@@ -203,7 +225,9 @@ export class NoteQueries {
     return this.db.all<NoteSummary>(
       `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
-              ${NoteQueries.CHILD_COUNT} AS childCount
+              ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
          FROM notes n
         WHERE n.isDeleted = 0 AND n.type = ?
         ORDER BY n.utcDateModified DESC
@@ -216,7 +240,9 @@ export class NoteQueries {
     return this.db.all<NoteSummary>(
       `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
               (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
-              ${NoteQueries.CHILD_COUNT} AS childCount
+              ${NoteQueries.CHILD_COUNT} AS childCount,
+              ${NoteQueries.LABEL("iconClass")} AS iconClass,
+              ${NoteQueries.LABEL("color")} AS color
          FROM notes n
         WHERE n.isDeleted = 0 AND n.noteId != ?
         ORDER BY n.utcDateModified DESC

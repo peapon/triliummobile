@@ -549,6 +549,13 @@ textarea:focus {
   height: 18px;
 }
 
+/* A boxicons glyph from the note's `iconClass`. Sized to match the inline SVG it replaces. */
+.note-icon i[class^="bx"],
+.note-icon i[class*=" bx"] {
+  font-size: 19px;
+  line-height: 1;
+}
+
 .note-text {
   flex: 1 1 auto;
   min-width: 0;
