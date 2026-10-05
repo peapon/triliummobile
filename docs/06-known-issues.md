@@ -14,6 +14,7 @@ in the same voice as the things that work.
 | K5 | **Handwriting recognition is deferred** | Ink only, no text | By decision, not omission |
 | K6 | **A test server's database must not be edited directly** | Doing so desynchronises the client and looks like a client bug | Process, see §6.4 |
 | K7 | **The device's WebView version on the HarmonyOS-4.x tablet is unknown** | If it is below Chromium 102, OPFS is unavailable and the app cannot run | To check on the device |
+| K8 | **Two languages ship: Chinese and English.** Trilium ships forty | Speakers of the other thirty-eight get English | Deliberate, see below |
 
 ### K1: iOS/iPadOS
 
@@ -31,6 +32,28 @@ The requirements are recorded, and none of them is small:
 
   The workable route is a small HTTP server inside the app on `http://localhost:<port>`,
   which is a secure context. That is more Swift than the Android shell by a wide margin.
+
+### K8: languages
+
+Trilium ships forty — `ar az bg ca cn cs de el en en-GB es fa fi fr ga hi hr hu id it ja ko md mr
+nb-NO nl pl pt_br pt ro ru sl sr sv tr tw ug uk ur vi` — and this client ships two.
+
+The gap is deliberate. Machine-translating a hundred and fifty-four strings into thirty-eight
+languages would put text in the interface that nobody has reviewed, in languages the author cannot
+read, in an application whose whole premise is that it renders a user's own notes faithfully. Trilium
+does not do it that way either: it uses Weblate, with people translating.
+
+What has been done instead is to make a language **addable gradually**, which is the property that
+matters:
+
+- `t()` falls back to **English**, not to Chinese. A contributor who translates eighty of the
+  hundred and fifty-four keys gets a UI that is eighty per cent theirs and readable in the rest. The
+  fallback used to be Chinese, which made a partial translation worse than useless for anybody who
+  does not read Chinese — and is why only two languages existed.
+
+Adding one is a matter of adding an entry to `CATALOGUES` in `apps/web/src/i18n.ts` and to
+`LANGUAGES`, with whatever subset of keys is ready. `tools/i18n-audit.ts` checks the two maintained
+catalogues for agreement; a contributed one that is incomplete is expected and fine.
 
 ### K7: the WebView version
 

@@ -465,9 +465,17 @@ export function setLanguage(language: Language): void {
   }
 }
 
-/** Substitute `{name}` placeholders. Values are escaped by the caller when they reach markup. */
+/**
+ * Substitute `{name}` placeholders. Values are escaped by the caller when they reach markup.
+ *
+ * The fallback is **English**, not Chinese, and that is what makes a partial translation usable. A
+ * contributor who translates eighty of a hundred and fifty keys gets a UI that is eighty per cent in
+ * their language and readable in the rest, rather than one that is half in a language they do not
+ * read. It is also the only way a language can be added incrementally — which is how all forty of
+ * Trilium's were added.
+ */
 export function t(key: string, vars?: Record<string, string | number>): string {
-  const template = CATALOGUES[current][key] ?? CATALOGUES.cn[key] ?? key;
+  const template = CATALOGUES[current][key] ?? CATALOGUES.en[key] ?? key;
   if (!vars) return template;
 
   return template.replace(/\{(\w+)\}/g, (whole, name: string) =>
