@@ -32,6 +32,21 @@ function getBridge(): NativeBridge | null {
 }
 
 /** True when running inside the HarmonyOS shell. */
+/**
+ * Tell the shell whether a back gesture has anywhere to go.
+ *
+ * The shell cannot work this out: the app is one document that navigates with `history.pushState`,
+ * and a WebView's `accessBackward()` counts document navigations, not same-document entries. So
+ * without this the shell answers "nowhere to go" on every press and the system exits the app.
+ *
+ * A no-op in a browser, where the platform's own back already drives `popstate`.
+ */
+export function reportBackEnabled(enabled: boolean): void {
+  const native = (globalThis as unknown as { triliumNative?: { setBackEnabled?: (v: boolean) => void } })
+    .triliumNative;
+  native?.setBackEnabled?.(enabled);
+}
+
 export function hasNativeBridge(): boolean {
   return getBridge() !== null;
 }

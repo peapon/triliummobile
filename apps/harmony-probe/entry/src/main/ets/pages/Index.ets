@@ -96,7 +96,7 @@ struct Index {
         .javaScriptProxy({
           object: this.api,
           name: "triliumNative",
-          methodList: ["request", "reset"],
+          methodList: ["request", "reset", "setBackEnabled"],
           controller: this.controller
         })
         .onControllerAttached(() => {

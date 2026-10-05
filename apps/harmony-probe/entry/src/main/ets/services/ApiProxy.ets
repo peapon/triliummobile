@@ -15,6 +15,7 @@
  * forwarded, so session handling has exactly one owner.
  */
 
+import { ShellState } from "./ShellState";
 import { util } from "@kit.ArkTS";
 import { BusinessError } from "@kit.BasicServicesKit";
 import { hilog } from "@kit.PerformanceAnalysisKit";
@@ -112,6 +113,16 @@ export class ApiProxy {
   }
 
   /** Drop the session, so reconfiguring the server does not carry the old one over. */
+  /**
+   * The page reports whether a back gesture has anywhere to go.
+   *
+   * A method on the injected object rather than a polled value: the page knows, the shell cannot
+   * work it out, and `onBackPressed` has to answer synchronously.
+   */
+  setBackEnabled(enabled: boolean): void {
+    ShellState.backEnabled = enabled === true;
+  }
+
   reset(): void {
     this.cookies.clear();
   }

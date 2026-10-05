@@ -13,7 +13,7 @@
 import { toSnippet, type NoteDetail, type NoteSummary } from "./data.js";
 import { icon } from "./icons.js";
 import { InkCanvas, createInkDoc, paintInk, parseInkDoc, serializeInkDoc } from "./ink.js";
-import { hasNativeBridge, nativeFetch } from "./native-fetch.js";
+import { hasNativeBridge, nativeFetch, reportBackEnabled } from "./native-fetch.js";
 import { WorkerClient, type AppCounts, type ProgressEvent } from "./rpc.js";
 import "./style.css";
 
@@ -722,6 +722,18 @@ async function render(): Promise<void> {
 
   measureAppBar();
   wire();
+
+  // Mirrors `stepBack`: true exactly when there is something for a back gesture to undo.
+  reportBackEnabled(
+    state.dialog !== null ||
+      state.openNoteId !== null ||
+      state.libraryPath.length > 0 ||
+      state.sheet === "view" ||
+      state.settingsOpen ||
+      state.aiOpen ||
+      state.searchOpen ||
+      state.editorOpen
+  );
 }
 
 /**

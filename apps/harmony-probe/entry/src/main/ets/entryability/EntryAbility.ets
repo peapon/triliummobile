@@ -47,10 +47,10 @@ export default class EntryAbility extends UIAbility {
    * which is what a user expects.
    */
   onBackPressed(): boolean {
-    const controller = ShellState.controller;
-
-    if (controller && controller.accessBackward()) {
-      controller.backward();
+    // Ask the page, not the WebView. The page knows whether a dialog, a note or a folder is open;
+    // the WebView only knows about document navigations, and this app has none.
+    if (ShellState.backEnabled && ShellState.controller) {
+      ShellState.controller.runJavaScript("window.__triliumBack && window.__triliumBack()");
       return true;
     }
 
