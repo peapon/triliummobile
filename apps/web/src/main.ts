@@ -41,6 +41,22 @@ type SortKey = "position" | "modified" | "created" | "title";
 /** Bottom sheets, the reference's pattern for options and for creating. */
 type Sheet = "none" | "view";
 
+/**
+ * An in-app prompt, because a WebView's own is not there.
+ *
+ * `window.prompt` and `window.confirm` need the host to implement a callback — ArkWeb has `onAlert`
+ * and nothing for these two, so they quietly return `null` and `false`. Both rename and delete bailed
+ * out on that and appeared to do nothing at all. Android and iOS WebViews need the equivalent native
+ * wiring, so relying on them is wrong on every platform this client targets.
+ */
+interface Dialog {
+  kind: "rename" | "delete";
+  noteId: string;
+  title: string;
+  /** Current value, for a rename. */
+  value: string;
+}
+
 /** How many quick notes the 速记 list shows. The rest are reachable through the library. */
 const QUICK_NOTE_LIMIT = 50;
 
@@ -112,6 +128,8 @@ interface AppState {
   sheet: Sheet;
   /** Unattended sync interval in seconds. */
   syncIntervalSeconds: number;
+  /** The in-app dialog that is up, if any. */
+  dialog: Dialog | null;
   /** The note ids walked into, root first. Empty means the tree root. */
   libraryPath: string[];
   /** Titles for the walked path, so a breadcrumb needs no extra query. */
@@ -162,6 +180,7 @@ const state: AppState = {
   sort: "position",
   sheet: "none",
   syncIntervalSeconds: DEFAULT_SYNC_INTERVAL_SECONDS,
+  dialog: null,
   libraryPath: [],
   libraryTitles: [],
   editorOpen: false,
@@ -279,6 +298,14 @@ function pushStep(): void {
  * overlay and letting the system exit.
  */
 function stepBack(): boolean {
+  // Order matters: a dialog is raised over a note, so it has to come down before the note does.
+  // With this below the note check, confirming a rename closed the note instead of the dialog.
+  if (state.dialog) {
+    state.dialog = null;
+    void render();
+    return true;
+  }
+
   if (state.openNoteId !== null) {
     state.openNoteId = null;
     state.detailMode = "view";
@@ -686,6 +713,7 @@ async function render(): Promise<void> {
     <div class="view" id="view">${view}</div>
     ${detail}
     ${renderFabCluster()}
+    ${renderDialog()}
     ${renderSheet()}
     ${renderEditor()}
     ${renderSearchScreen()}
@@ -957,6 +985,34 @@ function renderFabCluster(): string {
     <div class="fab-cluster">
       <button id="open-search" class="fab" aria-label="搜索">${icon("search", "icon-lg")}</button>
       <button id="open-editor" class="fab fab-primary" aria-label="新建速记">${icon("plus", "icon-lg")}</button>
+    </div>
+  `;
+}
+
+/** The rename and delete dialogs, drawn by the app rather than asked of the WebView. */
+function renderDialog(): string {
+  const dialog = state.dialog;
+  if (!dialog) return "";
+
+  const body =
+    dialog.kind === "rename"
+      ? `<input id="dialog-input" value="${escapeAttr(dialog.value)}" autocomplete="off" />`
+      : `<p class="dialog-text">「${escapeHtml(dialog.title || "这条笔记")}」及其全部子笔记都会被删除，并同步到其他设备。</p>`;
+
+  const confirmLabel = dialog.kind === "rename" ? "重命名" : "删除";
+
+  return `
+    <div class="sheet-backdrop" id="dialog-backdrop">
+      <div class="sheet" role="dialog" aria-label="${confirmLabel}">
+        <div class="sheet-group">
+          <div class="sheet-label">${dialog.kind === "rename" ? "重命名" : "删除笔记"}</div>
+          ${body}
+        </div>
+        <button class="sheet-action danger" id="dialog-confirm">
+          ${icon(dialog.kind === "rename" ? "check" : "trash")}<span>${confirmLabel}</span>
+        </button>
+        <button class="sheet-cancel" id="dialog-cancel">取消</button>
+      </div>
     </div>
   `;
 }
@@ -1475,6 +1531,23 @@ function wire(): void {
     void renameOpenNote();
   });
 
+  document.getElementById("dialog-confirm")?.addEventListener("click", () => {
+    void confirmDialog();
+  });
+
+  document.getElementById("dialog-cancel")?.addEventListener("click", () => history.back());
+  document.getElementById("dialog-backdrop")?.addEventListener("click", (event) => {
+    if (event.target === event.currentTarget) history.back();
+  });
+
+  // Enter accepts, which is what a one-line field invites.
+  document.getElementById("dialog-input")?.addEventListener("keydown", (event) => {
+    if ((event as KeyboardEvent).key === "Enter") {
+      (event as KeyboardEvent).preventDefault();
+      void confirmDialog();
+    }
+  });
+
   document.getElementById("note-delete")?.addEventListener("click", () => {
     void deleteOpenNote();
   });
@@ -1668,16 +1741,15 @@ async function renameOpenNote(): Promise<void> {
   if (!noteId) return;
 
   const note = await api.getNote(noteId);
-  const next = window.prompt("重命名", note?.title ?? "");
-  if (next === null) return;
-
-  const title = next.trim();
-  if (title === "" || title === note?.title) return;
-
-  await api.renameNote(noteId, title);
-  await refreshChrome();
-  showToast("已重命名，等待同步", false);
+  state.dialog = { kind: "rename", noteId, title: note?.title ?? "", value: note?.title ?? "" };
+  pushStep();
   await render();
+
+  // Focus after the markup exists, with the caret at the end so the old name can be replaced by
+  // typing rather than by selecting.
+  const input = document.getElementById("dialog-input") as HTMLInputElement | null;
+  input?.focus();
+  input?.setSelectionRange(input.value.length, input.value.length);
 }
 
 /**
@@ -1691,16 +1763,37 @@ async function deleteOpenNote(): Promise<void> {
   if (!noteId) return;
 
   const note = await api.getNote(noteId);
-  const label = note?.title || "这条笔记";
-  if (!window.confirm(`删除「${label}」及其全部子笔记？`)) return;
-
-  await api.deleteNote(noteId);
-  state.openNoteId = null;
-  state.detailMode = "view";
-
-  await refreshChrome();
-  showToast("已删除，等待同步", false);
+  state.dialog = { kind: "delete", noteId, title: note?.title ?? "", value: "" };
+  pushStep();
   await render();
+}
+
+/** Carry out whatever the dialog was asking about. */
+async function confirmDialog(): Promise<void> {
+  const dialog = state.dialog;
+  if (!dialog) return;
+
+  if (dialog.kind === "rename") {
+    const input = document.getElementById("dialog-input") as HTMLInputElement | null;
+    const title = (input?.value ?? dialog.value).trim();
+
+    if (title !== "" && title !== dialog.title) {
+      await api.renameNote(dialog.noteId, title);
+      await refreshChrome();
+      showToast("已重命名，等待同步", false);
+    }
+  } else {
+    await api.deleteNote(dialog.noteId);
+    state.openNoteId = null;
+    state.detailMode = "view";
+    await refreshChrome();
+    showToast("已删除，等待同步", false);
+  }
+
+  // Closing is left to `stepBack`, which clears the dialog and re-renders. Clearing it here first
+  // would leave `stepBack` looking at the next thing down the stack — the open note — and close that
+  // instead, which is how a rename used to dismiss the note.
+  history.back();
 }
 
 /** Attach a file to the note that is open. */
