@@ -31,6 +31,7 @@ const PATHS: Record<string, string> = {
   canvas: `<rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8" cy="10" r="2"/><circle cx="16" cy="15" r="2"/><path d="M9.5 11.5l5 2.5"/>`,
   grid: `<rect x="4" y="4" width="7" height="7" rx="1.5"/><rect x="13" y="4" width="7" height="7" rx="1.5"/><rect x="4" y="13" width="7" height="7" rx="1.5"/><rect x="13" y="13" width="7" height="7" rx="1.5"/>`,
   list: `<path d="M4 6h16M4 12h16M4 18h16"/>`,
+  paperclip: `<path d="M20 11.5 12.5 19a4 4 0 0 1-5.7-5.7l7.8-7.8a2.7 2.7 0 0 1 3.8 3.8l-7.8 7.8a1.4 1.4 0 0 1-1.9-1.9l7.1-7.1"/>`,
   trash: `<path d="M4 7h16"/><path d="M9 7V5h6v2"/><path d="M6 7l1 13h10l1-13"/><path d="M10 11v6M14 11v6"/>`,
   plus: `<path d="M12 5v14M5 12h14"/>`,
   ai: `<path d="M12 3.5l1.9 4.6 4.6 1.9-4.6 1.9L12 16.5l-1.9-4.6L5.5 10l4.6-1.9z"/><path d="M18.5 16.5l.8 1.9 1.9.8-1.9.8-.8 1.9-.8-1.9-1.9-.8 1.9-.8z"/>`,

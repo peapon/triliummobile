@@ -23,7 +23,7 @@ import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
 const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
 /** Trilium's own default for `syncServerTimeout`, which is its polling interval. */
-const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
+const DEFAULT_SYNC_INTERVAL_SECONDS = 300;
 
 const ROOT_NOTE_ID = "root";
 
@@ -317,6 +317,33 @@ async function configureWithSecret(serverHost: string, documentSecret: string): 
   session = probe;
 }
 
+/**
+ * The note that AI chats live under.
+ *
+ * Trilium keeps them in `_llmChat`, a hidden system subtree. Hidden notes are excluded from every
+ * list, which is deliberate — but this one has to be found rather than listed. Created only once the
+ * replica is complete, for the same reason the inbox is: otherwise a fresh install would add a second
+ * one to the vault.
+ */
+function ensureLlmChatHome(): string {
+  const existing = store.queryRaw<{ noteId: string }>(
+    "SELECT noteId FROM notes WHERE noteId = '_llmChat' AND isDeleted = 0"
+  );
+  if (existing?.noteId) return existing.noteId;
+
+  if (store.lastSyncedPull === 0) {
+    throw new Error("首次同步尚未完成，稍后再试");
+  }
+
+  return store.createNote({
+    parentNoteId: ROOT_NOTE_ID,
+    title: "AI Chat History",
+    type: "book",
+    mime: "text/html",
+    content: ""
+  }).noteId;
+}
+
 /** Rebuild bytes that crossed the RPC boundary as a plain array. */
 function toBytes(value: Uint8Array | number[]): Uint8Array {
   return value instanceof Uint8Array ? value : Uint8Array.from(value);
@@ -468,6 +495,19 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return queries.recentQuickNotes(request.params[0], request.params[1]);
     case "recent":
       return queries.recent(request.params[0] ?? 30);
+    case "createLlmChat": {
+      // A chat is an ordinary note whose content is a JSON message list, which is how Trilium stores
+      // one. That means creating it is a local write like any other, and it syncs like any other.
+      const home = ensureLlmChatHome();
+      const created = store.createNote({
+        parentNoteId: home,
+        title: `AI 对话 ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+        type: "llmChat",
+        mime: "application/json",
+        content: JSON.stringify({ version: 1, messages: [] })
+      });
+      return created;
+    }
     case "notesOfType":
       return queries.notesOfType(request.params[0], request.params[1]);
     case "createImageNote": {

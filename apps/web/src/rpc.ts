@@ -55,6 +55,8 @@ export interface AppApi {
   recent(limit?: number): Promise<NoteSummary[]>;
   /** Notes of one Trilium type, for the AI chat list. */
   notesOfType(type: string, limit?: number): Promise<NoteSummary[]>;
+  /** Create an AI chat note. A local write, so it works offline and syncs like any other note. */
+  createLlmChat(): Promise<{ noteId: string }>;
   createTextNote(options: { parentNoteId: string; title: string; content: string }): Promise<{ noteId: string }>;
   /** An image note: the picture is the note itself, which is how Trilium stores a standalone image. */
   createImageNote(options: {
@@ -216,6 +218,7 @@ export class WorkerClient implements AppApi {
     this.call("recentQuickNotes", inboxNoteId, limit);
   recent = (limit?: number) => this.call("recent", limit);
   notesOfType = (type: string, limit?: number) => this.call("notesOfType", type, limit);
+  createLlmChat = () => this.call("createLlmChat");
 
   createTextNote = (options: { parentNoteId: string; title: string; content: string }) =>
     this.call("createTextNote", options);

@@ -51,9 +51,38 @@ const QUICK_NOTE_LIMIT = 50;
  * `getSyncTimeout()` reads the seconds out of the options table and multiplies by 1000, falling back
  * to 120000ms. Kept in seconds for the same reason Trilium does: it is the unit a person picks.
  */
-const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
-const MIN_SYNC_INTERVAL_SECONDS = 15;
+const DEFAULT_SYNC_INTERVAL_SECONDS = 300;
 const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
+
+/**
+ * The intervals offered, one minute to four hours.
+ *
+ * Fixed steps rather than a free number: the useful range spans two orders of magnitude, and a person
+ * choosing between "五分钟" and "半小时" is choosing, not calculating. The list is what makes the
+ * intent readable, and it keeps a value like 7 seconds — which would poll a server 500 times an hour
+ * — from being expressible.
+ *
+ * `0` stays as "关闭": the manual button is still there, and a client on a metered connection has a
+ * legitimate reason to want no unattended traffic at all.
+ */
+const SYNC_INTERVALS: ReadonlyArray<{ seconds: number; label: string }> = [
+  { seconds: 0, label: "关闭（仅手动）" },
+  { seconds: 60, label: "1 分钟" },
+  { seconds: 300, label: "5 分钟" },
+  { seconds: 900, label: "15 分钟" },
+  { seconds: 1800, label: "30 分钟" },
+  { seconds: 3600, label: "1 小时" },
+  { seconds: 7200, label: "2 小时" },
+  { seconds: 14400, label: "4 小时" }
+];
+
+/** Snap a stored value to an offered one, so a legacy or hand-edited number cannot fall outside. */
+function nearestSyncInterval(seconds: number): number {
+  const allowed = SYNC_INTERVALS.map((entry) => entry.seconds);
+  return allowed.reduce((best, current) =>
+    Math.abs(current - seconds) < Math.abs(best - seconds) ? current : best
+  );
+}
 
 interface AppState {
   tab: Tab;
@@ -91,8 +120,8 @@ interface AppState {
   editorOpen: boolean;
   editorTitle: string;
   editorBody: string;
-  /** How many images are waiting to be attached when the note is saved. */
-  editorImages: number;
+  /** How many files are waiting to be attached when the note is saved. */
+  editorAttachments: number;
   /** Search is a screen of its own, not a tab. */
   searchOpen: boolean;
   /** The AI chat list, opened from the home action row. */
@@ -138,7 +167,7 @@ const state: AppState = {
   editorOpen: false,
   editorTitle: "",
   editorBody: "",
-  editorImages: 0,
+  editorAttachments: 0,
   searchOpen: false,
   searchQuery: "",
   aiOpen: false
@@ -543,14 +572,15 @@ function renderBootSkeleton(): void {
 }
 
 /**
- * Images picked in the editor but not yet attached.
+ * Files picked in the editor but not yet attached.
  *
- * Held here rather than in `state` because they are `File`s, not markup. An image cannot be attached
+ * Held here rather than in `state` because they are `File`s, not markup. A file cannot be attached
  * before the note it belongs to exists, so it waits for the save — and it becomes an **attachment on
- * that note**, referenced from the note's own text, which is what inserting a picture into a note
- * means in Trilium. Creating a separate image note per picture is not that.
+ * that note**, referenced from the note's own text. That is what inserting a picture into a note
+ * means in Trilium, and it is the same shape for a PDF: an image is inlined, anything else is
+ * linked. Creating a separate note per file is not that.
  */
-let pendingImages: File[] = [];
+let pendingFiles: File[] = [];
 
 // ---------------------------------------------------------------- unattended sync
 
@@ -927,7 +957,6 @@ function renderFabCluster(): string {
     <div class="fab-cluster">
       <button id="open-search" class="fab" aria-label="搜索">${icon("search", "icon-lg")}</button>
       <button id="open-editor" class="fab fab-primary" aria-label="新建速记">${icon("plus", "icon-lg")}</button>
-      <button id="open-ai" class="fab" aria-label="AI 笔记">${icon("ai", "icon-lg")}</button>
     </div>
   `;
 }
@@ -1002,14 +1031,15 @@ function renderEditor(): string {
         <button id="editor-cancel" class="icon-only ghost" aria-label="放弃">${icon("close", "icon-lg")}</button>
         <span class="screen-title">新建速记</span>
         <button id="editor-image" class="ghost">${icon("image")} 图片</button>
+        <button id="editor-file" class="ghost">${icon("paperclip")} 附件</button>
         <button id="editor-save" class="primary">完成</button>
       </div>
 
       <div class="view">
         <input id="editor-title" placeholder="标题（可留空）" value="${escapeAttr(state.editorTitle)}" autocomplete="off" />
         <textarea id="editor-body" placeholder="记你想记…" autofocus>${escapeHtml(state.editorBody)}</textarea>
-        ${state.editorImages > 0
-          ? `<div class="pending-images">${state.editorImages} 张图片将插入正文</div>`
+        ${state.editorAttachments > 0
+          ? `<div class="pending-images">${state.editorAttachments} 个文件将插入正文</div>`
           : ""}
       </div>
     </div>
@@ -1039,6 +1069,29 @@ function renderSearchScreen(): string {
       <div class="view" id="search-results"></div>
     </div>
   `;
+}
+
+/**
+ * Start an AI chat.
+ *
+ * The note is made locally — a chat is a note whose content is a JSON message list — so this works
+ * offline and syncs like anything else. What it cannot do is *talk to a model*: that happens on the
+ * server, through `/api/llm-chat/stream`, and it needs the server's provider configured. So the note
+ * is created and opened, and the conversation itself continues where it can.
+ */
+async function startAiChat(): Promise<void> {
+  try {
+    const created = await api.createLlmChat();
+    await refreshChrome();
+    showToast("已新建对话，等待同步", false);
+
+    state.aiOpen = false;
+    state.openNoteId = created.noteId;
+    pushStep();
+    await render();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), true);
+  }
 }
 
 /**
@@ -1090,6 +1143,7 @@ async function renderAiScreen(): Promise<string> {
           <span>对话</span>
           <span class="section-count">${chats.length} 个</span>
         </div>
+        <button id="ai-new" class="attachment-add">${icon("plus")} 新建对话</button>
         ${body}
       </div>
     </div>
@@ -1359,6 +1413,10 @@ function wire(): void {
     void addImageToEditor();
   });
 
+  document.getElementById("editor-file")?.addEventListener("click", () => {
+    void addFileToEditor();
+  });
+
   // `⌘/Ctrl + Enter` keeps the keyboard shortcut the inline form had.
   document.getElementById("editor-body")?.addEventListener("keydown", (event) => {
     const keyboard = event as KeyboardEvent;
@@ -1382,9 +1440,15 @@ function wire(): void {
   // ----------------------------------------------------------------- the AI
 
   document.getElementById("open-ai")?.addEventListener("click", () => {
+    // Opened from settings, so the settings screen has to come down first.
+    state.settingsOpen = false;
     state.aiOpen = true;
     pushStep();
     void render();
+  });
+
+  document.getElementById("ai-new")?.addEventListener("click", () => {
+    void startAiChat();
   });
 
   document.getElementById("ai-back")?.addEventListener("click", () => history.back());
@@ -1488,22 +1552,28 @@ async function saveFromEditor(): Promise<void> {
       content: `<p>${escapeHtml(body.trim()).replace(/\n/g, "</p><p>")}</p>`
     });
 
-    // Attach each image to the note, then rewrite the content to point at them. Two steps because an
+    // Attach each file to the note, then rewrite the content to point at them. Two steps because an
     // attachment needs the note's id, which only exists once the note does.
-    if (pendingImages.length > 0) {
+    if (pendingFiles.length > 0) {
       const references: string[] = [];
 
-      for (const file of pendingImages) {
+      for (const file of pendingFiles) {
+        const mime = file.type || "application/octet-stream";
         const attached = await api.attachFile({
           ownerNoteId: created.noteId,
           title: file.name,
-          mime: file.type || "image/png",
+          mime,
           bytes: await readBytes(file)
         });
 
-        // Trilium's own reference form for an image attachment inside note text.
+        const href = `api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}`;
+
+        // Trilium's own reference form. A picture is shown; anything else is a link, because an
+        // `<img>` pointing at a PDF renders as a broken image.
         references.push(
-          `<p><img src="api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}"></p>`
+          mime.startsWith("image/")
+            ? `<p><img src="${href}"></p>`
+            : `<p><a href="${href}">${escapeHtml(file.name)}</a></p>`
         );
       }
 
@@ -1512,8 +1582,8 @@ async function saveFromEditor(): Promise<void> {
         `<p>${escapeHtml(body.trim()).replace(/\n/g, "</p><p>")}</p>${references.join("")}`
       );
 
-      pendingImages = [];
-      state.editorImages = 0;
+      pendingFiles = [];
+      state.editorAttachments = 0;
     }
 
     state.editorOpen = false;
@@ -1548,16 +1618,25 @@ async function saveFromEditor(): Promise<void> {
  * The note does not exist yet, so the file waits until the save.
  */
 async function addImageToEditor(): Promise<void> {
+  await queueForEditor("image/*");
+}
+
+/** The same, for anything that is not a picture. */
+async function addFileToEditor(): Promise<void> {
+  await queueForEditor("*/*");
+}
+
+async function queueForEditor(accept: string): Promise<void> {
   // Read the fields back into state *before* anything re-renders. `commit` replaces the whole body,
   // so an unsaved draft lives only in the DOM and is destroyed by the next render — which meant
-  // picking a picture silently discarded the note being written.
+  // picking a file silently discarded the note being written.
   captureEditorDraft();
 
-  const file = await pickFile("image/*");
+  const file = await pickFile(accept);
   if (!file) return;
 
-  pendingImages = [...pendingImages, file];
-  state.editorImages = pendingImages.length;
+  pendingFiles = [...pendingFiles, file];
+  state.editorAttachments = pendingFiles.length;
   await render();
 }
 
@@ -1978,9 +2057,13 @@ async function renderSettings(): Promise<void> {
         下面的按钮只在你想手动清空时用。
       </div>
       <div class="field">
-        <label for="sync-interval">自动同步间隔（秒，0 = 关闭）</label>
-        <input id="sync-interval" type="number" inputmode="numeric" min="0" step="15"
-               value="${state.syncIntervalSeconds}" />
+        <label for="sync-interval">自动同步间隔</label>
+        <select id="sync-interval">
+          ${SYNC_INTERVALS.map(
+            (entry) =>
+              `<option value="${entry.seconds}" ${entry.seconds === state.syncIntervalSeconds ? "selected" : ""}>${entry.label}</option>`
+          ).join("")}
+        </select>
       </div>
 
       <div class="field">
@@ -1988,6 +2071,7 @@ async function renderSettings(): Promise<void> {
         <input id="blob-cap" type="number" inputmode="numeric" value="${cap}" />
       </div>
       <button id="save-settings" class="primary">保存</button>
+      <button id="open-ai" style="margin-top:10px">AI 对话</button>
       <button id="reconfigure" style="margin-top:10px">重新配置服务端</button>
       <button id="clear-data" class="danger">清除本地数据（保留连接设置）</button>
     </div>
@@ -1999,12 +2083,12 @@ async function renderSettings(): Promise<void> {
     const value = Number((document.getElementById("blob-cap") as HTMLInputElement).value);
     await api.setMaxBlobContentSize(Number.isFinite(value) && value >= 0 ? value : 4 * 1024 * 1024);
 
-    const interval = Number((document.getElementById("sync-interval") as HTMLInputElement).value);
+    const interval = Number((document.getElementById("sync-interval") as HTMLSelectElement).value);
     if (Number.isFinite(interval) && interval >= 0) {
       // Zero is a legitimate choice — it means "only when I ask" — so it is honoured rather than
       // treated as an absent value.
-      state.syncIntervalSeconds = Math.floor(interval);
-      await api.setSyncIntervalSeconds(state.syncIntervalSeconds);
+      state.syncIntervalSeconds = interval;
+      await api.setSyncIntervalSeconds(interval);
       applySyncInterval();
     }
 
