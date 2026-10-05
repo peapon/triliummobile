@@ -989,6 +989,17 @@ function renderFabCluster(): string {
   `;
 }
 
+/**
+ * Whether the note currently open is one this editor can safely round-trip.
+ *
+ * Read from the DOM rather than from state: the long-press handler runs between renders and has no
+ * note object to hand.
+ */
+function renderableForEdit(): boolean {
+  const type = document.querySelector<HTMLElement>(".detail")?.dataset.noteType;
+  return type === "text" || type === "code";
+}
+
 /** The rename and delete dialogs, drawn by the app rather than asked of the WebView. */
 function renderDialog(): string {
   const dialog = state.dialog;
@@ -1262,10 +1273,15 @@ async function renderDetail(noteId: string): Promise<string> {
 
   const renderable = note.type === "text" || note.type === "code";
 
-  // Editing is intentionally only offered for the note types this client can round-trip safely.
-  // A `book`, `canvas` or `render` note has structure this simple editor would destroy.
-  const desktop = isPad();
-  const toolbar = desktop && renderable ? renderDetailToolbar(note) : "";
+  // Editing is only offered for the note types this client can round-trip safely. A `book`, `canvas`
+  // or `render` note has structure this simple editor would destroy.
+  //
+  // On a tablet the toolbar is always there. On a phone it appears only once editing has begun: the
+  // phone is for 速记 / 速查 / 查看, so editing is entered deliberately — a long press on the note —
+  // and once inside, the way out has to be visible.
+  const renderableType = renderable;
+  const toolbar =
+    renderableType && (isPad() || state.detailMode === "edit") ? renderDetailToolbar(note) : "";
 
   const bodyClass = state.detailMode === "edit" ? "body editing" : "body";
 
@@ -1281,7 +1297,7 @@ async function renderDetail(noteId: string): Promise<string> {
       : "";
 
   return `
-    <div class="detail" data-mode="${state.detailMode}">
+    <div class="detail" data-mode="${state.detailMode}" data-note-type="${escapeAttr(note.type)}">
       <div class="appbar">
         <button id="detail-back" class="ghost">${icon("back")} 返回</button>
         <h1>${escapeHtml(note.title || "(无标题)")}</h1>
@@ -1561,6 +1577,35 @@ function wire(): void {
     void addAttachmentToOpenNote();
   });
 
+  // A long press on the note opens the editor, on a phone. `contextmenu` is the event a WebView
+  // reliably raises for a press-and-hold, and preventing the default keeps the text-selection menu
+  // from appearing over it.
+  const body = document.querySelector<HTMLElement>(".detail .body");
+  if (body && !isPad() && state.detailMode === "view") {
+    const enter = (event: Event) => {
+      if (!renderableForEdit()) return;
+      event.preventDefault();
+      state.detailMode = "edit";
+      void render();
+    };
+
+    body.addEventListener("contextmenu", enter);
+
+    // Touch has no `contextmenu` in every engine, so a timer backs it up.
+    let timer: number | null = null;
+    body.addEventListener("touchstart", () => {
+      timer = window.setTimeout(enter, 500);
+    }, { passive: true });
+    for (const end of ["touchend", "touchmove", "touchcancel"] as const) {
+      body.addEventListener(end, () => {
+        if (timer !== null) {
+          window.clearTimeout(timer);
+          timer = null;
+        }
+      }, { passive: true });
+    }
+  }
+
   if (state.openNoteId) void wireDetail(state.openNoteId);
 }
 
@@ -1639,10 +1684,12 @@ async function saveFromEditor(): Promise<void> {
           bytes: await readBytes(file)
         });
 
-        const href = `api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}`;
+        // Two different endpoints. `/image/` refuses anything whose role is not `image` — the server
+        // answers "has role 'file', but a picture was expected" — so a PDF has to use `/download`.
+        const href = mime.startsWith("image/")
+          ? `api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}`
+          : `api/attachments/${attached.attachmentId}/download`;
 
-        // Trilium's own reference form. A picture is shown; anything else is a link, because an
-        // `<img>` pointing at a PDF renders as a broken image.
         references.push(
           mime.startsWith("image/")
             ? `<p><img src="${href}"></p>`
@@ -1831,14 +1878,24 @@ async function addAttachmentToOpenNote(): Promise<void> {
  * returned so nothing flashes.
  */
 async function rewriteAttachmentUrls(html: string): Promise<string> {
-  const matches = [...html.matchAll(/src="api\/attachments\/([A-Za-z0-9]+)\//g)];
+  // `src` for a picture, `href` for anything else — both point at the API, and both have to be
+  // resolved locally or they leave the app. Matching only `src` left every file link pointing at a
+  // route this client does not serve.
+  const matches = [...html.matchAll(/(src|href)="api\/attachments\/([A-Za-z0-9]+)\//g)];
   if (matches.length === 0) return html;
 
   let out = html;
   for (const match of matches) {
-    const dataUrl = await api.attachmentDataUrl(match[1]!);
+    const attribute = match[1]!;
+    const attachmentId = match[2]!;
+
+    const dataUrl = await api.attachmentDataUrl(attachmentId);
     if (!dataUrl) continue;
-    out = out.replaceAll(`src="api/attachments/${match[1]}/`, `src="${dataUrl}#`);
+
+    out = out.replaceAll(
+      `${attribute}="api/attachments/${attachmentId}/`,
+      `${attribute}="${dataUrl}#`
+    );
   }
 
   return out;

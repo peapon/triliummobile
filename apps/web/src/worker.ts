@@ -515,8 +515,9 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return store.createImageNote({ parentNoteId, title, mime, bytes: toBytes(bytes) });
     }
     case "attachmentDataUrl": {
-      // Inline images in a note's text point at `api/attachments/<id>/image/<name>`. This client has
-      // no HTTP route for that, so the bytes have to be handed to the renderer directly.
+      // A note's text references attachments through the API — `/image/<name>` for a picture,
+      // `/download` for anything else. This client serves neither, so the bytes are handed to the
+      // renderer directly, which also means an attachment opens offline.
       const found = store.readAttachmentBytes(request.params[0]);
       if (!found) return null;
       return toDataUrl(found.content, found.mime);
