@@ -710,7 +710,7 @@ async function render(): Promise<void> {
 
   commit(`
     ${renderAppbar()}
-    <div class="view" id="view">${view}</div>
+    <div class="view" id="view" data-view="${state.tab}">${view}</div>
     ${detail}
     ${renderFabCluster()}
     ${renderDialog()}

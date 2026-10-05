@@ -313,7 +313,7 @@ async function main(): Promise<void> {
         name: "library",
         open: async () => {
           await page.click('[data-tab="library"]');
-          await page.waitForSelector(".section-head");
+          await page.waitForSelector('#view[data-view="library"]');
         }
       },
       {

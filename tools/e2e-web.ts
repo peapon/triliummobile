@@ -323,7 +323,9 @@ async function main(): Promise<void> {
     // ---------------------------------------------------------------- browse
 
     await goLibrary(page);
-    await page.waitForSelector(".list, .grid, .empty");
+    // Wait for the view to be the library, not merely for a container to exist: the 速记 list renders
+    // the same `.list`, so waiting on it read the previous tab's DOM and found no `data-into`.
+    await page.waitForSelector('#view[data-view="library"] .list, #view[data-view="library"] .grid, #view[data-view="library"] .empty');
     const browseRows = await page.locator("#view .row, #view .card").count();
     check("the library lists the tree from root", browseRows > 0, `${browseRows} children`);
 
