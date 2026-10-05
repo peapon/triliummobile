@@ -232,6 +232,15 @@ function stepBack(): boolean {
     return true;
   }
 
+  // Walking up the tree is a step. Without this the back gesture leaves the app from three levels
+  // deep, which is not what backing out of a folder means.
+  if (state.libraryPath.length > 0) {
+    state.libraryPath = state.libraryPath.slice(0, -1);
+    state.libraryTitles = state.libraryTitles.slice(0, -1);
+    void render();
+    return true;
+  }
+
   if (state.sheet === "view") {
     state.sheet = "none";
     void render();
@@ -747,7 +756,10 @@ function renderNoteCollection(notes: NoteSummary[], context: "notes" | "library"
  */
 function renderNoteCard(note: NoteSummary, context: "notes" | "library"): string {
   const kind = noteKind(note.type);
-  const descends = context === "library" && note.type === "book";
+  // Having children is what makes a note a container. A `book` is one, but so are `doc`, `text`,
+  // `code` and `render` notes — in a real vault only 23 of 152 parents were books, so keying on the
+  // type stranded every level below the second.
+  const descends = context === "library" && note.childCount > 0;
 
   const className = state.layout === "grid" ? "card" : "row";
   const target = descends ? `data-into="${note.noteId}"` : `data-open="${note.noteId}"`;
@@ -783,7 +795,7 @@ function noteKind(type: string): string {
 
 /** `更新 3月5日` for a note, `N 个子笔记` for a book. */
 function describeNote(note: NoteSummary, descends: boolean): string {
-  if (descends) return "目录";
+  if (descends) return `${note.childCount} 项`;
 
   const date = note.utcDateModified?.slice(0, 10).replace(/-/g, "/") ?? "";
   return date ? `更新 ${date}` : note.type;

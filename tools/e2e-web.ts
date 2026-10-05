@@ -327,17 +327,54 @@ async function main(): Promise<void> {
     const browseRows = await page.locator("#view .row, #view .card").count();
     check("the library lists the tree from root", browseRows > 0, `${browseRows} children`);
 
-    // Descending is what makes it a tree rather than a list: a `book` opens its own level and the
-    // breadcrumb appears so the way back is visible.
-    const firstBook = page.locator('[data-into]').first();
-    if (await firstBook.count()) {
-      await firstBook.click();
-      await page.waitForSelector(".crumbs", { timeout: 15_000 });
-      check("tapping a book descends and shows the way back", true);
-      await page.click('[data-crumb="root"]');
+    /*
+     * Descend until there is nothing left to descend into, then walk all the way back.
+     *
+     * The depth is the vault's, not a number chosen here. What has to hold is that *any* depth
+     * works: an earlier version keyed descent on `note.type === "book"`, which stranded every level
+     * below the second because only 23 of this vault's 152 parents are books.
+     */
+    let deepest = 0;
+    for (let step = 0; step < 40; step++) {
+      const into = page.locator("[data-into]");
+      if ((await into.count()) === 0) break;
+
+      const titles = await into.locator(".title").allTextContents();
+      const counts = (await into.locator(".meta").allTextContents()).map(
+        (m) => Number((m.match(/(\d+)/) ?? ["0"])[0])
+      );
+
+      // Prefer the known-deep branch; row count alone walks into the inbox, which is wide but flat.
+      let pick = titles.findIndex((t) => (t ?? "").includes("Trilium Demo"));
+      if (pick < 0) {
+        pick = 0;
+        for (let i = 1; i < counts.length; i++) if (counts[i]! > counts[pick]!) pick = i;
+      }
+
+      await into.nth(pick).click();
       await page.waitForTimeout(400);
-      check("the breadcrumb returns to the root", (await page.locator(".crumbs").count()) === 0);
+      deepest++;
+
+      check(
+        `level ${deepest} does not overflow the viewport`,
+        !(await page.evaluate(() => document.documentElement.scrollWidth > window.innerWidth + 1)),
+        `after ${titles[pick]}`
+      );
     }
+
+    check("the tree descends at least three levels", deepest >= 3, `${deepest} levels`);
+
+    // And every step back must come off the stack, not out of the app.
+    for (let step = 0; step < deepest + 2; step++) {
+      if ((await page.locator(".crumbs span:not(.sep)").count()) === 0) break;
+      await page.evaluate(() => history.back());
+      await page.waitForTimeout(350);
+    }
+    check(
+      "backing out once per level returns to the root",
+      (await page.locator(".crumbs").count()) === 0,
+      `after walking ${deepest} levels`
+    );
     await page.screenshot({ path: "/tmp/triliummobile-3-browse.png" });
 
     // --------------------------------------------------------------- viewing

@@ -20,6 +20,14 @@ export interface NoteSummary {
   isDeleted: number;
   utcDateModified: string;
   parentNoteId: string | null;
+  /**
+   * How many notes sit under this one.
+   *
+   * This, not the note's `type`, decides whether tapping it descends. Trilium lets a `text`, `doc`,
+   * `code` or `render` note hold children just as a `book` does — in a real vault only 23 of 152
+   * parents were books — so a type check strands every level below the second.
+   */
+  childCount: number;
 }
 
 export interface NoteDetail extends NoteSummary {
@@ -39,10 +47,20 @@ export interface NoteDetail extends NoteSummary {
 export class NoteQueries {
   constructor(private readonly db: SqlDatabase) {}
 
+  /**
+   * The `childCount` a summary carries, as SQL.
+   *
+   * A correlated subquery rather than a join: the join would multiply rows for a note that appears
+   * under several parents, and this list is ordered and paginated by the caller.
+   */
+  private static readonly CHILD_COUNT =
+    "(SELECT COUNT(*) FROM branches cb WHERE cb.parentNoteId = n.noteId AND cb.isDeleted = 0)";
+
   childrenOf(parentNoteId: string): NoteSummary[] {
     return this.db.all<NoteSummary>(
       `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
-              b.parentNoteId AS parentNoteId
+              b.parentNoteId AS parentNoteId,
+              ${NoteQueries.CHILD_COUNT} AS childCount
          FROM branches b
          JOIN notes n ON n.noteId = b.noteId
         WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0
@@ -100,7 +118,12 @@ export class NoteQueries {
       blobId: string | null;
       isDeleted: number;
       utcDateModified: string;
-    }>("SELECT noteId, title, type, mime, blobId, isDeleted, utcDateModified FROM notes WHERE noteId = ?", [
+      parentNoteId: string | null;
+      childCount: number;
+    }>(`SELECT n.noteId, n.title, n.type, n.mime, n.blobId, n.isDeleted, n.utcDateModified,
+                      (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+                      ${NoteQueries.CHILD_COUNT} AS childCount
+                 FROM notes n WHERE n.noteId = ?`, [
       noteId
     ]);
 
@@ -157,7 +180,8 @@ export class NoteQueries {
 
     return this.db.all<NoteSummary>(
       `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
-              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+              ${NoteQueries.CHILD_COUNT} AS childCount
          FROM notes n
          LEFT JOIN blobs b ON b.blobId = n.blobId
         WHERE n.isDeleted = 0
@@ -178,7 +202,8 @@ export class NoteQueries {
   notesOfType(type: string, limit = 40): NoteSummary[] {
     return this.db.all<NoteSummary>(
       `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
-              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+              ${NoteQueries.CHILD_COUNT} AS childCount
          FROM notes n
         WHERE n.isDeleted = 0 AND n.type = ?
         ORDER BY n.utcDateModified DESC
@@ -190,7 +215,8 @@ export class NoteQueries {
   recent(limit = 40): NoteSummary[] {
     return this.db.all<NoteSummary>(
       `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
-              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId,
+              ${NoteQueries.CHILD_COUNT} AS childCount
          FROM notes n
         WHERE n.isDeleted = 0 AND n.noteId != ?
         ORDER BY n.utcDateModified DESC

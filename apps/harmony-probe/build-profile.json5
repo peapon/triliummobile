@@ -7,11 +7,11 @@
         "material": {
           "certpath": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001BD2F9989A285EB2FA9C87A2639DB929D5526604116E3780E26807CC296FF8E480ED6E7172C6E5E0",
+          "keyPassword": "0000001BB657A8E32D32EEFF31A743655125D6375D5677A3E978B161E12F92AE38D2C6C0F487A06EC3C0D1",
           "profile": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.p12",
-          "storePassword": "0000001B30F1D8F71BF7965AA7C394072621FD9F8C7ECBE86DEFADE0EDE10B98606D1AAF905B3FBBBE12A3"
+          "storePassword": "0000001B6774E75F68DD33D2DD94919B82028F3CA01C2431373ED8F98254A022ABD11A2DD0500EE954E7B3"
         }
       }
     ],
