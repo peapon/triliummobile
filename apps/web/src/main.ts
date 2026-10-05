@@ -1628,24 +1628,27 @@ function wire(): void {
  * unless the shell implements `onShowFileSelector` — which `Index.ets` now does. Kept as a promise so
  * callers read like the rest of the app rather than like event plumbing.
  */
-function pickFile(accept: string): Promise<File | null> {
+function pickFile(accept: string, multiple = false): Promise<File[]> {
   return new Promise((resolve) => {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = accept;
+    // Without this a picker hands over one file, which is not what a phone's gallery offers when
+    // someone wants to put three photographs in one note.
+    input.multiple = multiple;
     input.style.display = "none";
     document.body.appendChild(input);
 
     input.addEventListener("change", () => {
-      const file = input.files?.[0] ?? null;
+      const files = Array.from(input.files ?? []);
       input.remove();
-      resolve(file);
+      resolve(files);
     });
 
     // A cancelled picker fires no event in some engines; `cancel` covers the ones that do.
     input.addEventListener("cancel", () => {
       input.remove();
-      resolve(null);
+      resolve([]);
     });
 
     input.click();
@@ -1764,10 +1767,10 @@ async function queueForEditor(accept: string): Promise<void> {
   // picking a file silently discarded the note being written.
   captureEditorDraft();
 
-  const file = await pickFile(accept);
-  if (!file) return;
+  const files = await pickFile(accept, true);
+  if (files.length === 0) return;
 
-  pendingFiles = [...pendingFiles, file];
+  pendingFiles = [...pendingFiles, ...files];
   state.editorAttachments = pendingFiles.length;
   await render();
 }
@@ -1860,19 +1863,21 @@ async function addAttachmentToOpenNote(): Promise<void> {
   const noteId = state.openNoteId;
   if (!noteId) return;
 
-  const file = await pickFile("*/*");
-  if (!file) return;
+  const files = await pickFile("*/*", true);
+  if (files.length === 0) return;
 
   try {
-    await api.attachFile({
-      ownerNoteId: noteId,
-      title: file.name,
-      mime: file.type || "application/octet-stream",
-      bytes: await readBytes(file)
-    });
+    for (const file of files) {
+      await api.attachFile({
+        ownerNoteId: noteId,
+        title: file.name,
+        mime: file.type || "application/octet-stream",
+        bytes: await readBytes(file)
+      });
+    }
 
     await refreshChrome();
-    showToast(`已附加 ${file.name}`, false);
+    showToast(files.length === 1 ? `已附加 ${files[0]!.name}` : `已附加 ${files.length} 个文件`, false);
     await render();
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), true);
