@@ -1,0 +1,16 @@
+// Deliberately not a Capacitor project. The web bundle is already platform-neutral — it asks the
+// shell for one thing, an HTTP request — so the Android side is a WebView, a bridge, and a file
+// chooser, and nothing else. Capacitor would add a plugin layer to route around.
+buildscript {
+    repositories {
+        google()
+        mavenCentral()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:9.1.1'
+    }
+}
+
+tasks.register('clean', Delete) {
+    delete rootProject.buildDir
+}

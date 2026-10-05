@@ -26,6 +26,53 @@ interface NativeBridge {
   reset(): void;
 }
 
+/**
+ * Wrap Android's bridge into the shape this file already expects.
+ *
+ * A `@JavascriptInterface` method cannot be asynchronous from JavaScript's side — it returns before
+ * the request has been made — so the promise is assembled here instead: the call hands over an id,
+ * and the shell calls `__triliumAndroidResolve` when the answer arrives. That keeps one contract for
+ * both shells rather than a second code path in the protocol.
+ */
+function installAndroidBridge(): void {
+  const globals = globalThis as unknown as {
+    triliumAndroid?: {
+      request(id: string, method: string, url: string, headersJson: string, bodyBase64: string): void;
+      reset?(): void;
+    };
+    triliumNative?: NativeBridge;
+    __triliumAndroidResolve?: (id: string, raw: string) => void;
+  };
+
+  const native = globals.triliumAndroid;
+  if (!native || globals.triliumNative) return;
+
+  let sequence = 0;
+  const pending = new Map<string, (raw: string) => void>();
+
+  globals.__triliumAndroidResolve = (id, raw) => {
+    const settle = pending.get(id);
+    if (settle) {
+      pending.delete(id);
+      settle(raw);
+    }
+  };
+
+  globals.triliumNative = {
+    request: (method, url, headersJson, bodyBase64) =>
+      new Promise<string>((resolve) => {
+        const id = `a${++sequence}`;
+        pending.set(id, resolve);
+        native.request(id, method, url, headersJson, bodyBase64);
+      }),
+    // The shell reports whether a back press has anywhere to go by calling the page instead, so
+    // there is nothing to push; `reportBackEnabled` stays a no-op here.
+    reset: () => native.reset?.()
+  };
+}
+
+installAndroidBridge();
+
 function getBridge(): NativeBridge | null {
   const candidate = (globalThis as unknown as { triliumNative?: NativeBridge }).triliumNative;
   return candidate && typeof candidate.request === "function" ? candidate : null;
