@@ -238,9 +238,6 @@ body {
 button {
   font: inherit;
   color: inherit;
-  /* A control's label is one line, always. Without this a button squeezed by its row wraps its own
-     text and reads as two stacked characters — which is exactly what 图片 / 附件 / 完成 did. */
-  white-space: nowrap;
   background: var(--surface-2);
   border: 0;
   border-radius: var(--radius-md);
@@ -1441,9 +1438,19 @@ p.note code {
 }
 
 /* The bar has four things in it on a phone: close, title, attach, done. The buttons must not be the
-   ones that give way — the title already truncates. */
-.screen .appbar button {
+   ones that give way — the title already truncates.
+   
+   `nowrap` belongs to these labels and not to every button: a row in a list is a button too, and a
+   long title there has to wrap. Applying it globally made search results run off a 320px screen. */
+.screen .appbar button,
+.segmented button,
+.sheet-action,
+.sheet-cancel {
   flex: 0 0 auto;
+  white-space: nowrap;
+}
+
+.screen .appbar button {
   padding-left: var(--space-3);
   padding-right: var(--space-3);
 }
