@@ -369,11 +369,24 @@ async function vaultSwitchTest(): Promise<void> {
 async function autoConfigureForTest(): Promise<void> {
   const server = import.meta.env?.VITE_E2E_SERVER;
   const password = import.meta.env?.VITE_E2E_PASSWORD;
+  const secret = import.meta.env?.VITE_E2E_SECRET;
 
-  if (!server || !password) return;
+  // Either credential will do: the password only ever fetches the seed, and the login itself is
+  // built from the secret.
+  if (!server || (!password && !secret)) return;
 
   try {
-    if (!state.configured) {
+    if (secret) {
+      // A build-time secret skips the password exchange, for verifying against a vault whose
+      // password is not available. The HMAC login only ever uses the secret.
+      console.log(`shell: configuring from a known secret against ${server}`);
+      await api.configureWithSecret(server, secret);
+      await refreshChrome();
+      await render();
+
+      // Nothing may be owed to a server we are only reading. If this is non-zero, stop.
+      console.log(`shell: pending before sync = ${state.pending}`);
+    } else if (!state.configured && password) {
       console.log(`shell: test auto-configure against ${server}`);
       await api.configure(server, password);
       await refreshChrome();
@@ -382,7 +395,12 @@ async function autoConfigureForTest(): Promise<void> {
       console.log(`shell: already configured against ${state.serverHost}`);
     }
 
-    // Always sync on boot in a test build: that is the thing being verified on the device.
+    if (secret && state.pending > 0) {
+      console.log(`shell: REFUSING to sync — ${state.pending} local changes would be written to a server we only mean to read`);
+      return;
+    }
+
+    // Sync on boot in a test build: that is the thing being verified on the device.
     await runSync();
     console.log(
       `shell: boot sync finished ok=${state.lastOk} message="${state.lastMessage}" ` +

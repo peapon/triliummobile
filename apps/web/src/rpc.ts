@@ -88,6 +88,8 @@ export interface AppApi {
    */
   useNativeHttp(enabled: boolean): Promise<void>;
   configure(serverHost: string, password: string): Promise<void>;
+  /** Configure from a known document secret, skipping the password exchange. */
+  configureWithSecret(serverHost: string, documentSecret: string): Promise<void>;
   sync(): Promise<SyncSummary>;
   pendingPushCount(): Promise<number>;
   reset(): Promise<void>;
@@ -203,6 +205,8 @@ export class WorkerClient implements AppApi {
   setBlobBudget = (bytes: number) => this.call("setBlobBudget", bytes);
   useNativeHttp = (enabled: boolean) => this.call("useNativeHttp", enabled);
   configure = (serverHost: string, password: string) => this.call("configure", serverHost, password);
+  configureWithSecret = (serverHost: string, documentSecret: string) =>
+    this.call("configureWithSecret", serverHost, documentSecret);
   sync = () => this.call("sync");
   pendingPushCount = () => this.call("pendingPushCount");
   reset = () => this.call("reset");

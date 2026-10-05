@@ -246,6 +246,67 @@ function explainConnectionFailure(host: string, error: unknown): Error {
   return new Error(message);
 }
 
+/**
+ * Configure from a known `documentSecret`, skipping the password exchange.
+ *
+ * The password is only ever used to *fetch* the seed; the HMAC login is built from the secret alone.
+ * Someone restoring a client from a backup, or pointing a second client at a vault they already
+ * sync, has the secret and not necessarily a reason to hand over the password again.
+ */
+/**
+ * Discard the replica when the target is a different vault.
+ *
+ * The vault is identified by its **`documentSecret`**, not its `documentId`: the secret is what the
+ * login HMAC is keyed by, so two vaults always differ and one vault never does. `documentId` would
+ * be the more obvious key but it is not readable over the API — `/api/options` does not expose it.
+ *
+ * Decided *after* the server has answered, never before: a mistyped address or a wrong password must
+ * leave the existing replica untouched. Keeping another vault's rows while the cursors still index
+ * the old journal would interleave two vaults on the next push, irreversibly.
+ */
+function applyVaultSwitch(documentSecret: string): boolean {
+  const previousSecret = store.getOption(OPTION_DOCUMENT_SECRET);
+  if (!previousSecret || previousSecret === documentSecret) return false;
+
+  report({ phase: "connecting", message: "检测到不同的知识库，正在清除本地副本…" });
+  store.wipeReplica();
+  peerInstanceId = null;
+  return true;
+}
+
+async function configureWithSecret(serverHost: string, documentSecret: string): Promise<void> {
+  const probe = new SyncTransport({
+    serverHost,
+    documentSecret,
+    syncVersion: 0,
+    ...(useNativeHttp ? { fetchImpl: bridgeFetch as typeof fetch } : {})
+  });
+
+  let status: { isInitialized: boolean; syncVersion: number };
+  try {
+    status = await probe.getSetupStatus();
+  } catch (error) {
+    throw explainConnectionFailure(serverHost, error);
+  }
+
+  if (!status.isInitialized) {
+    throw new Error("该服务端尚未初始化。");
+  }
+
+  // Prove the secret works before adopting it, so a typo cannot replace a working configuration.
+  probe.syncVersion = status.syncVersion;
+  await probe.login();
+
+  applyVaultSwitch(documentSecret);
+
+  store.setOption(OPTION_SYNC_SERVER_HOST, serverHost.replace(/\/+$/, ""));
+  store.setOption(OPTION_DOCUMENT_SECRET, documentSecret);
+  // The login we just performed identifies the peer, which is what makes the echo filter — and
+  // therefore the pending count — meaningful before the first sync.
+  peerInstanceId = probe.serverInstanceId;
+  session = probe;
+}
+
 async function configure(serverHost: string, password: string): Promise<void> {
   const probe = new SyncTransport({
     serverHost,
@@ -274,25 +335,11 @@ async function configure(serverHost: string, password: string): Promise<void> {
     throw new Error("服务端没有返回 documentId / documentSecret，密码可能不正确。");
   }
 
-  // Decide *after* the server has answered and the seed has been read, never before: a mistyped
-  // address or a wrong password must leave the existing replica untouched.
-  const previousDocumentId = store.documentId;
-  const switchingVault = previousDocumentId !== null && previousDocumentId !== documentId;
-
-  if (switchingVault) {
-    // The replica belongs to the old vault. Keeping it would leave those rows in place while the
-    // cursors still index the old server's journal, and the next sync would push them to the new
-    // server — interleaving two vaults irreversibly.
-    report({
-      phase: "connecting",
-      message: "检测到不同的知识库，正在清除本地副本…"
-    });
-    store.wipeReplica();
-    peerInstanceId = null;
-  }
+  applyVaultSwitch(documentSecret);
 
   store.setOption(OPTION_SYNC_SERVER_HOST, serverHost.replace(/\/+$/, ""));
   store.setOption(OPTION_DOCUMENT_SECRET, documentSecret);
+  // Display only — the wipe decision is keyed on the secret, which is what identifies the vault.
   store.documentId = documentId;
   session = null;
 }
@@ -458,12 +505,21 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return undefined;
     case "configure":
       return configure(request.params[0], request.params[1]);
+    case "configureWithSecret":
+      return configureWithSecret(request.params[0], request.params[1]);
     case "sync":
       return sync();
     case "pendingPushCount": {
-      const pending = store.collectChangesToPush().filter(
-        (change) => !peerInstanceId || change.instanceId !== peerInstanceId
-      );
+      // Before a login there is no peer to compare against, so the echo filter cannot run. The
+      // honest lower bound is "changes this device originated" — rows stamped with our own instance
+      // id. Counting everything instead reported a full page of the journal as owed on a fresh
+      // install, which is both wrong and alarming.
+      const pending = store
+        .collectChangesToPush(Number.MAX_SAFE_INTEGER)
+        .filter((change) =>
+          peerInstanceId ? change.instanceId !== peerInstanceId : change.instanceId === store.localInstanceId
+        );
+
       return pending.length;
     }
     case "fetchNoteBlob": {
