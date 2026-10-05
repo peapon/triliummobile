@@ -451,6 +451,8 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return queries.search(request.params[0], request.params[1] ?? 40);
     case "recent":
       return queries.recent(request.params[0] ?? 30);
+    case "notesOfType":
+      return queries.notesOfType(request.params[0], request.params[1]);
     case "createTextNote":
       return store.createTextNote(request.params[0]);
     case "inboxNoteId":

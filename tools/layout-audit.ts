@@ -73,6 +73,9 @@ const MEASURE_SOURCE = String.raw`
     .filter(function (el) {
       const s = getComputedStyle(el);
       if (s.overflow === "visible" || s.display === "none") return false;
+      // An ellipsis is a decision, not a defect: a long title is *meant* to shorten. Only text that
+      // is cut with no indication is a finding.
+      if (s.textOverflow === "ellipsis") return false;
       if (el.scrollWidth <= el.clientWidth + 1) return false;
       return Array.from(el.childNodes).some(function (n) {
         return n.nodeType === Node.TEXT_NODE && n.textContent && n.textContent.trim();
@@ -242,13 +245,17 @@ async function main(): Promise<void> {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.fill("#password", PASSWORD);
     await page.click("#connect");
-    await page.waitForSelector(".tabbar", { timeout: 180_000 });
+    await page.waitForSelector(".segmented", { timeout: 180_000 });
     // The bar is deliberately silent when settled, so "finished" is "the sync button is enabled
     // again", not a phrase.
     await page.waitForFunction(
       () => {
-        const button = document.getElementById("sync") as HTMLButtonElement | null;
-        return button !== null && !button.disabled;
+      // Settled means the status strip has nothing to say: it is hidden when there is no pending
+      // work and no sync in flight. A failure is terminal too, so `bad` also counts.
+      const strip = document.getElementById("status");
+      if (strip === null) return false;
+      if ((strip as HTMLElement).hidden) return true;
+      return strip.classList.contains("bad");
       },
       undefined,
       { timeout: 180_000 }
@@ -256,32 +263,58 @@ async function main(): Promise<void> {
 
     const screens: Array<{ name: string; open: () => Promise<void> }> = [
       {
-        name: "capture",
+        name: "home",
         open: async () => {
-          await page.click('[data-tab="capture"]');
-          await page.waitForSelector("#capture-body");
+          await page.click('[data-tab="notes"]');
+          await page.waitForSelector(".home-actions");
+        }
+      },
+      {
+        name: "library",
+        open: async () => {
+          await page.click('[data-tab="library"]');
+          await page.waitForSelector(".section-head");
+        }
+      },
+      {
+        name: "library-grid",
+        open: async () => {
+          await page.click('[data-tab="library"]');
+          await page.click("#open-sheet");
+          await page.waitForSelector('[data-choice="layout"]');
+          await page.click('[data-choice="layout"][data-value="grid"]');
+          await page.waitForSelector(".grid");
+        }
+      },
+      {
+        name: "sheet",
+        open: async () => {
+          await page.click("#open-sheet");
+          await page.waitForSelector(".sheet");
         }
       },
       {
         name: "search",
         open: async () => {
-          await page.click('[data-tab="search"]');
+          await page.click('[data-tab="notes"]');
+          await page.click("#open-search");
           await page.waitForSelector("#search-input");
         }
       },
       {
-        name: "browse",
+        name: "editor",
         open: async () => {
-          await page.click('[data-tab="browse"]');
-          await page.waitForSelector(".row");
+          await page.click('[data-tab="notes"]');
+          await page.click("#open-editor");
+          await page.waitForSelector("#editor-body");
         }
       },
       {
         name: "detail",
         open: async () => {
-          await page.click('[data-tab="browse"]');
-          await page.waitForSelector(".row");
-          await page.locator(".row").first().click();
+          await page.click('[data-tab="library"]');
+          await page.waitForSelector(".row, .card");
+          await page.locator(".row, .card").first().click();
           await page.waitForSelector(".detail");
         }
       }
@@ -295,9 +328,11 @@ async function main(): Promise<void> {
         console.log(`\n${screen.name} — ${vp.name} (${vp.width}x${vp.height})`);
         await audit(page, screen.name, vp.name);
 
-        if (screen.name === "detail") {
-          await page.click("#detail-back");
-          await page.waitForTimeout(300);
+        // Leave whatever this screen opened, so the next one starts from the same place. Only go
+        // back when something *is* open — `history.back()` with an empty stack leaves the app.
+        while (await page.locator(".detail, .sheet, .screen").count()) {
+          await page.evaluate(() => history.back());
+          await page.waitForTimeout(350);
         }
       }
     }

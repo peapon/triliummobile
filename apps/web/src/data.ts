@@ -157,6 +157,24 @@ export class NoteQueries {
     );
   }
 
+  /**
+   * Notes of one Trilium type, most recently modified first.
+   *
+   * Used to find `llmChat` notes. Reads only what sync already stored — the AI chats are ordinary
+   * notes in the tree, under a special `_llmChat` ancestor the server manages.
+   */
+  notesOfType(type: string, limit = 40): NoteSummary[] {
+    return this.db.all<NoteSummary>(
+      `SELECT DISTINCT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,
+              (SELECT parentNoteId FROM branches WHERE noteId = n.noteId AND isDeleted = 0 LIMIT 1) AS parentNoteId
+         FROM notes n
+        WHERE n.isDeleted = 0 AND n.type = ?
+        ORDER BY n.utcDateModified DESC
+        LIMIT ?`,
+      [type, limit]
+    );
+  }
+
   recent(limit = 40): NoteSummary[] {
     return this.db.all<NoteSummary>(
       `SELECT n.noteId, n.title, n.type, n.mime, n.isDeleted, n.utcDateModified,

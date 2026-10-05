@@ -30,6 +30,102 @@ const SERVER_DB = ".trilium-test-data/document.db";
 const failures: string[] = [];
 
 /**
+ * Poll a page-side predicate from Node.
+ *
+ * `page.waitForFunction` polls inside the page, and it stalled here on conditions the page had
+ * demonstrably already met: the blob fetch logged 0.5s in the worker while the wait sat for 300s,
+ * and the element was gone the moment the wait gave up. Asking from outside is not affected by
+ * whatever occupies the page's own timer.
+ */
+async function waitUntil(
+  page: Page,
+  predicate: () => boolean,
+  timeoutMs: number,
+  label: string
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    if (await page.evaluate(predicate)) return true;
+    await page.waitForTimeout(250);
+  }
+
+  console.log(`    ${label}: still false after ${timeoutMs / 1000}s`);
+  return false;
+}
+
+
+
+/**
+ * Navigation helpers.
+ *
+ * The shell changed shape: two tabs in a centred segmented control, search and the editor as screens
+ * of their own, and sync behind the options sheet. Naming each journey once keeps the checks below
+ * about behaviour rather than about selectors.
+ */
+/**
+ * Dismiss whatever is on top, so navigation starts from a known place.
+ *
+ * Every screen here is an overlay, and an overlay intercepts pointer events — a test that navigates
+ * without closing one does not fail with "wrong screen", it fails with a click that never lands.
+ */
+async function dismissOverlays(page: Page): Promise<void> {
+  for (const [selector, closer] of [
+    ["#search-screen", "#search-cancel"],
+    ["#editor-screen", "#editor-cancel"],
+    ["#ai-screen", "#ai-back"],
+    [".sheet", "#sheet-cancel"],
+    [".detail", "#detail-back"]
+  ] as const) {
+    if (await page.locator(selector).count()) {
+      await page.click(closer).catch(() => {});
+      await page.waitForTimeout(350);
+    }
+  }
+}
+
+async function goHome(page: Page): Promise<void> {
+  await dismissOverlays(page);
+  await page.click('[data-tab="notes"]');
+  await page.waitForSelector(".home-actions");
+}
+
+async function goLibrary(page: Page): Promise<void> {
+  await dismissOverlays(page);
+  await page.click('[data-tab="library"]');
+  await page.waitForSelector(".section-head");
+}
+
+async function openSearch(page: Page, query = ""): Promise<void> {
+  await goHome(page);
+  await page.click("#open-search");
+  await page.waitForSelector("#search-input");
+  if (query) {
+    await page.fill("#search-input", query);
+    await page.waitForTimeout(400);
+  }
+}
+
+async function closeSearch(page: Page): Promise<void> {
+  await dismissOverlays(page);
+}
+
+async function openEditor(page: Page): Promise<void> {
+  await goHome(page);
+  await page.click("#open-editor");
+  await page.waitForSelector("#editor-body");
+}
+
+/** Sync lives in the options sheet now, so this is the journey a person takes. */
+async function syncVia(page: Page): Promise<void> {
+  await page.click("#open-sheet");
+  await page.waitForSelector("#sheet-sync");
+  await page.click("#sheet-sync");
+}
+
+
+
+/**
  * Wait until no sync is in flight.
  *
  * Deliberately does not look for a phrase. The app bar is silent when everything is fine — showing a
@@ -39,8 +135,12 @@ const failures: string[] = [];
 async function waitForSettled(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const button = document.getElementById("sync") as HTMLButtonElement | null;
-      return button !== null && !button.disabled;
+      // Settled means the status strip has nothing to say: it is hidden when there is no pending
+      // work and no sync in flight. A failure is terminal too, so `bad` also counts.
+      const strip = document.getElementById("status");
+      if (strip === null) return false;
+      if ((strip as HTMLElement).hidden) return true;
+      return strip.classList.contains("bad");
     },
     undefined,
     { timeout: 180_000 }
@@ -160,27 +260,27 @@ async function main(): Promise<void> {
 
     // First sync pulls the whole server. The tab bar appearing only means the shell rendered, so
     // wait for the status line to report completion before reading any counts from it.
-    await page.waitForSelector(".tabbar", { timeout: 120_000 });
+    await page.waitForSelector(".segmented", { timeout: 120_000 });
     await waitForSettled(page);
     check("setup flow reads the sync seed and completes a first sync", true);
 
     // The count is read from the capture screen's hint rather than a paragraph, so go there first.
-    await page.click('[data-tab="capture"]');
-    await page.waitForSelector("#capture-body");
-    const captureText = (await page.textContent("body")) ?? "";
-    const countMatch = captureText.match(/([\d,]+)\s*条笔记/);
-    const pulledNotes = Number((countMatch?.[1] ?? "0").replace(/,/g, ""));
+    await goHome(page);
+    const countText = (await page.textContent(".section-count")) ?? "";
+    const pulledNotes = Number((countText.match(/([\d,]+)/)?.[1] ?? "0").replace(/,/g, ""));
 
     check("the first sync actually populated the local replica", pulledNotes > 0, `${pulledNotes} notes`);
 
     // ---------------------------------------------------------------- search
 
-    await page.click('[data-tab="search"]');
-    await page.waitForSelector("#search-input");
+    await openSearch(page);
     await page.fill("#search-input", "Trilium");
     await page.waitForTimeout(500);
+    // Scope to the search screen: the tab underneath renders rows too, and an unscoped selector
+    // picks those and then times out because the overlay covers them.
+    const searchRows = page.locator("#search-results .row, #search-results .card");
 
-    const resultRows = await page.locator(".row").count();
+    const resultRows = await searchRows.count();
     check("local search returns results offline", resultRows > 0, `${resultRows} rows`);
 
     // --------------------------------------------------------------- capture
@@ -188,11 +288,12 @@ async function main(): Promise<void> {
     const before = serverNoteCount();
     const title = `E2E 速记 ${Date.now()}`;
 
-    await page.click('[data-tab="capture"]');
-    await page.waitForSelector("#capture-body");
-    await page.fill("#capture-title", title);
-    await page.fill("#capture-body", "从浏览器 UI 离线创建，随后同步到服务端。");
-    await page.click("#capture-save");
+    await goHome(page);
+    await openEditor(page);
+    await page.fill("#editor-title", title);
+    await page.fill("#editor-body", "从浏览器 UI 离线创建，随后同步到服务端。");
+    await page.click("#editor-save");
+    await page.waitForSelector("#editor-screen", { state: "detached", timeout: 30_000 }).catch(() => {});
 
     await page.waitForTimeout(400);
     check(
@@ -206,7 +307,7 @@ async function main(): Promise<void> {
     // Clicking sync, then waiting for the *server* to show the note. The app bar is silent when it
     // succeeds — a sentence there is what crushed the title to 0px — so there is no phrase to wait
     // for, and polling the outcome is immune to the UI's timing in a way a status check is not.
-    await page.click("#sync");
+    await syncVia(page);
 
     const delivered = await waitForServer(() => serverHasTitle(title), 120_000);
     check("the captured note reached the server's own database", delivered, `title="${title}"`);
@@ -221,17 +322,29 @@ async function main(): Promise<void> {
 
     // ---------------------------------------------------------------- browse
 
-    await page.click('[data-tab="browse"]');
-    await page.waitForSelector(".crumbs");
-    const browseRows = await page.locator(".row").count();
-    check("browse lists the tree from root", browseRows > 0, `${browseRows} children`);
+    await goLibrary(page);
+    await page.waitForSelector(".list, .grid, .empty");
+    const browseRows = await page.locator("#view .row, #view .card").count();
+    check("the library lists the tree from root", browseRows > 0, `${browseRows} children`);
+
+    // Descending is what makes it a tree rather than a list: a `book` opens its own level and the
+    // breadcrumb appears so the way back is visible.
+    const firstBook = page.locator('[data-into]').first();
+    if (await firstBook.count()) {
+      await firstBook.click();
+      await page.waitForSelector(".crumbs", { timeout: 15_000 });
+      check("tapping a book descends and shows the way back", true);
+      await page.click('[data-crumb="root"]');
+      await page.waitForTimeout(400);
+      check("the breadcrumb returns to the root", (await page.locator(".crumbs").count()) === 0);
+    }
     await page.screenshot({ path: "/tmp/triliummobile-3-browse.png" });
 
     // --------------------------------------------------------------- viewing
 
     // Opening a note is the "查看" half of the phone's job, and it exercises the sanitiser and the
     // content decode path (blob content arrives as bytes after a sync).
-    await page.locator(".row").first().click();
+    await page.locator("#view .row, #view .card").first().click();
     await page.waitForSelector(".detail .body", { timeout: 15_000 });
 
     const detailText = ((await page.textContent(".detail .body")) ?? "").trim();
@@ -245,12 +358,10 @@ async function main(): Promise<void> {
     await page.waitForTimeout(300);
 
     // Screenshots for human review; the automated checks above are the actual evidence.
-    await page.click('[data-tab="capture"]');
-    await page.waitForSelector("#capture-body");
+    await goHome(page);
     await page.screenshot({ path: "/tmp/triliummobile-1-capture.png" });
 
-    await page.click('[data-tab="search"]');
-    await page.waitForSelector("#search-input");
+    await openSearch(page);
     await page.screenshot({ path: "/tmp/triliummobile-2-search.png" });
 
     // ------------------------------------------------------------------ done
@@ -268,12 +379,11 @@ async function main(): Promise<void> {
     // Open the note captured above rather than whatever the tree happens to list first: the
     // toolbar is offered only for the types this editor can round-trip, and root's first child is a
     // `book`, which would make this section test nothing.
-    await page.click('[data-tab="search"]');
-    await page.waitForSelector("#search-input");
+    await openSearch(page);
     await page.fill("#search-input", title);
     await page.waitForTimeout(600);
 
-    const targetRow = page.locator(".row").first();
+    const targetRow = page.locator("#search-results .row, #search-results .card").first();
     const targetNoteId = await targetRow.getAttribute("data-note-id");
 
     if (!targetNoteId) {
@@ -365,7 +475,7 @@ async function main(): Promise<void> {
 
       // ------------------------------------------------- one sync carries both changes
 
-      await page.click("#sync");
+      await syncVia(page);
 
       const editArrived = await waitForServer(() => serverNoteContains(targetNoteId, marker));
       check("the tablet edit reached the server on the next sync", editArrived, `marker=${marker}`);
@@ -379,17 +489,25 @@ async function main(): Promise<void> {
 
       // ------------------------------------------------------- ink survives reload
 
+      // Let any sync finish before tearing the page down: reloading mid-round leaves the OPFS
+      // database locked for the incoming worker, which then cannot open it.
+      await waitForSettled(page);
       await page.reload({ waitUntil: "domcontentloaded" });
-      await page.waitForSelector(".tabbar", { timeout: 60_000 });
+
+      try {
+        await page.waitForSelector(".segmented", { timeout: 120_000 });
+      } catch {
+        const body = ((await page.textContent("body")) ?? "").replace(/\s+/g, " ").slice(0, 200);
+        check("the app comes back after a reload", false, body);
+        throw new Error(`reload did not reach the shell: ${body}`);
+      }
 
       // Find it by search rather than by position: the edit bumped its timestamp, so it has moved
       // to the top of the recency list and may not sit under the same parent row as before.
-      await page.click('[data-tab="search"]');
-      await page.waitForSelector("#search-input");
-      await page.fill("#search-input", marker);
+      await openSearch(page, marker);
       await page.waitForTimeout(600);
 
-      const reopened = page.locator(`[data-note-id="${targetNoteId}"]`).first();
+      const reopened = page.locator(`#search-results [data-note-id="${targetNoteId}"]`).first();
       if ((await reopened.count()) === 0) {
         check("the edited note is findable after a reload", false);
       } else {
@@ -416,12 +534,11 @@ async function main(): Promise<void> {
       await page.waitForTimeout(300);
     }
 
-    await page.click('[data-tab="search"]');
-    await page.waitForSelector("#search-input");
+    await openSearch(page);
     await page.fill("#search-input", "E2E 大附件笔记");
     await page.waitForTimeout(700);
 
-    const bigRow = page.locator(".row").first();
+    const bigRow = page.locator("#search-results .row, #search-results .card").first();
     if ((await bigRow.count()) === 0) {
       check("the seeded large note synced down", false);
     } else {
@@ -448,9 +565,11 @@ async function main(): Promise<void> {
         // was saturating the CPU during this run.
         let bodyLength = 0;
         try {
-          await page.waitForFunction(
+          await waitUntil(
+            page,
             () => (document.querySelector(".detail .body")?.textContent ?? "").length > 100_000,
-            { timeout: 180_000 }
+            180_000,
+            "note body"
           );
           bodyLength = ((await page.textContent(".detail .body")) ?? "").length;
         } catch {
@@ -472,11 +591,27 @@ async function main(): Promise<void> {
       const firstDownload = page.locator("[data-fetch-attachment]").first();
       if ((await firstDownload.count()) > 0) {
         await firstDownload.click();
-        await page.waitForFunction(
+
+        const downloaded = await waitUntil(
+          page,
           () => document.querySelectorAll("[data-fetch-attachment]").length === 0,
-          { timeout: 120_000 }
+          120_000,
+          "attachment"
         );
-        check("the attachment downloaded and is now cached", true);
+
+        if (!downloaded) {
+          // Say what actually happened rather than only that a wait expired.
+          console.log("    attachment download did not complete. state:");
+          console.log("      toast      :", await page.locator(".toast").textContent().catch(() => "(none)"));
+          console.log("      remaining  :", await page.locator("[data-fetch-attachment]").count());
+          console.log(
+            "      button text:",
+            await page.locator("#attachments button").first().textContent().catch(() => "(none)")
+          );
+          console.log("      status     :", await page.textContent("#status").catch(() => "(none)"));
+        }
+
+        check("the attachment downloaded and is now cached", downloaded);
       }
 
       // The cache is local, so the download must not have produced a sync obligation.

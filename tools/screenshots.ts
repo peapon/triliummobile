@@ -27,8 +27,12 @@ const OUT = process.argv[4] ?? "/tmp/triliummobile-shots";
 async function settle(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const button = document.getElementById("sync") as HTMLButtonElement | null;
-      return button !== null && !button.disabled;
+      // Settled means the status strip has nothing to say: it is hidden when there is no pending
+      // work and no sync in flight. A failure is terminal too, so `bad` also counts.
+      const strip = document.getElementById("status");
+      if (strip === null) return false;
+      if ((strip as HTMLElement).hidden) return true;
+      return strip.classList.contains("bad");
     },
     undefined,
     { timeout: 180_000 }
@@ -48,43 +52,72 @@ async function capture(page: Page, scheme: "dark" | "light"): Promise<void> {
   await page.setViewportSize({ width: 390, height: 844 });
 
   await page.goto(APP_URL, { waitUntil: "domcontentloaded" });
-  await page.waitForSelector(".tabbar", { timeout: 120_000 });
+  await page.waitForSelector(".segmented", { timeout: 120_000 });
   await settle(page);
 
-  await page.click('[data-tab="capture"]');
-  await page.waitForSelector("#capture-body");
-  await shoot(page, `${scheme}-1-capture`);
+  const leave = async () => {
+    while (await page.locator(".detail, .sheet, .screen").count()) {
+      await page.evaluate(() => history.back());
+      await page.waitForTimeout(350);
+    }
+  };
 
-  await page.click('[data-tab="search"]');
+  // 速记 — the quick-note surface.
+  await page.click('[data-tab="notes"]');
+  await page.waitForSelector(".home-actions");
+  await shoot(page, `${scheme}-1-notes`);
+
+  // The full-screen editor, which is where a note is actually written.
+  await page.click("#open-editor");
+  await page.waitForSelector("#editor-body");
+  await page.fill("#editor-body", "离线记一条，联网后自动同步。");
+  await shoot(page, `${scheme}-2-editor`);
+  await leave();
+
+  // 知识库 — the tree.
+  await page.click('[data-tab="library"]');
+  await page.waitForSelector(".list, .grid, .empty");
+  await shoot(page, `${scheme}-3-library`);
+
+  // The same children as a grid, which the options sheet switches to.
+  await page.click("#open-sheet");
+  await page.waitForSelector(".sheet");
+  await shoot(page, `${scheme}-4-sheet`);
+  await page.click('[data-choice="layout"][data-value="grid"]');
+  await page.waitForSelector(".grid");
+  await shoot(page, `${scheme}-5-library-grid`);
+  await page.click("#open-sheet");
+  await page.waitForSelector(".sheet");
+  await page.click('[data-choice="layout"][data-value="list"]');
+  await page.waitForSelector(".list");
+
+  // Search, as a screen of its own.
+  await page.click('[data-tab="notes"]');
+  await page.click("#open-search");
   await page.waitForSelector("#search-input");
-  await shoot(page, `${scheme}-2-search`);
+  await page.fill("#search-input", "Trilium");
+  await page.waitForTimeout(700);
+  await shoot(page, `${scheme}-6-search`);
+  await leave();
 
-  await page.click('[data-tab="browse"]');
-  await page.waitForSelector(".row");
-  await shoot(page, `${scheme}-3-browse`);
+  // AI chats, which Trilium stores as `llmChat` notes.
+  await page.click('[data-tab="notes"]');
+  await page.click("#open-ai");
+  await page.waitForSelector("#ai-screen");
+  await shoot(page, `${scheme}-7-ai`);
+  await leave();
 
-  await page.locator(".row").first().click();
+  // A note, and the tablet frame where the list and the note sit side by side.
+  await page.click('[data-tab="library"]');
+  await page.waitForSelector(".row, .card");
+  await page.locator("#view .row, #view .card").first().click();
   await page.waitForSelector(".detail");
-  await shoot(page, `${scheme}-4-detail`);
-  await page.click("#detail-back");
-  await page.waitForTimeout(500);
+  await shoot(page, `${scheme}-8-detail`);
 
-  await page.click("#settings");
-  await page.waitForSelector("#clear-data");
-  await shoot(page, `${scheme}-5-settings`);
-  await page.click("#settings-back");
-  await page.waitForTimeout(500);
-
-  // The tablet frame: two panes instead of one.
   await page.setViewportSize({ width: 1024, height: 768 });
-  await page.waitForTimeout(400);
-  await page.click('[data-tab="browse"]');
-  await page.waitForSelector(".row");
-  await page.locator(".row").first().click();
-  await page.waitForSelector(".detail");
-  await shoot(page, `${scheme}-6-tablet`);
-  await page.click("#detail-back");
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(500);
+  await shoot(page, `${scheme}-9-tablet`);
+  await leave();
 }
 
 async function main(): Promise<void> {
@@ -108,7 +141,7 @@ async function main(): Promise<void> {
     await shoot(page, "0-setup");
     await page.fill("#password", PASSWORD);
     await page.click("#connect");
-    await page.waitForSelector(".tabbar", { timeout: 180_000 });
+    await page.waitForSelector(".segmented", { timeout: 180_000 });
     await settle(page);
     console.log("configured.");
 

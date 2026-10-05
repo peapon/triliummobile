@@ -320,56 +320,272 @@ textarea:focus {
   padding: var(--space-4);
 }
 
-.tabbar {
+/* ------------------------------------------------------- segmented control */
+
+/*
+ * The primary navigation, centred in the top bar.
+ *
+ * Replaces a bottom tab bar. The reference places its two sections here and has no bottom bar at
+ * all, which frees the entire lower edge of the screen — worth a great deal on a phone being held
+ * one-handed.
+ */
+.segmented {
   display: flex;
-  background: var(--surface);
-  padding-bottom: var(--safe-bottom);
-  box-shadow: 0 -1px 3px rgb(0 0 0 / 18%);
+  flex: 1 1 auto;
+  justify-content: center;
+  gap: var(--space-1);
+  min-width: 0;
 }
 
-.tabbar button {
-  flex: 1;
-  border-radius: 0;
+/*
+ * 44px of touch area around a 36px pill.
+ *
+ * The pill is drawn by `::before` so the control can look compact — the reference's is — while still
+ * meeting the tap floor. `isolation` makes the button its own stacking context, which is what lets a
+ * negative z-index child sit above an ancestor's background yet below the label.
+ */
+.segmented button {
+  position: relative;
+  isolation: isolate;
+  min-height: var(--tap);
+  padding: 0 var(--space-4);
   background: transparent;
-  min-height: 58px;
+  color: var(--muted);
+  font-size: var(--text-base);
+  font-weight: 560;
+  transition: color var(--dur-2) var(--ease-out);
+}
+
+.segmented button::before {
+  content: "";
+  position: absolute;
+  inset: 4px 0;
+  z-index: -1;
+  border-radius: var(--radius-pill);
+  transition: background var(--dur-2) var(--ease-out);
+}
+
+.segmented button[aria-selected="true"] {
+  color: var(--text);
+}
+
+.segmented button[aria-selected="true"]::before {
+  background: var(--surface-2);
+}
+
+/* ------------------------------------------------------------ status strip */
+
+/*
+ * Appears only when there is something to say, so the resting state costs no height.
+ *
+ * The tab bar it replaces was 58px permanently; this is 0px until work is owed.
+ */
+.status-strip {
+  font-size: var(--text-xs);
+  color: var(--muted);
+  background: var(--surface);
+  padding: var(--space-1) var(--space-4);
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  box-shadow: var(--elev-1);
+}
+
+.status-strip[hidden] {
+  display: none;
+}
+
+.status-strip.ok {
+  color: var(--ok);
+}
+.status-strip.bad {
+  color: var(--danger);
+}
+.status-strip.busy {
+  color: var(--warn);
+}
+
+/* ----------------------------------------------------------- capture entry */
+
+/*
+ * A bar, not a form. Tapping it opens the full-screen editor, which is the reference's flow and the
+ * right one for a phone: the form it replaces spent a third of the screen on a label, a banner and a
+ * hint before a single character was typed.
+ */
+.capture-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: 52px;
+  padding: var(--space-3) var(--space-4);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  color: var(--faint);
+  font-size: var(--text-base);
+  text-align: left;
+  box-shadow: var(--elev-1);
+}
+
+.capture-bar .icon {
+  width: 19px;
+  height: 19px;
+  color: var(--accent);
+}
+
+/* --------------------------------------------------------- home action row */
+
+/*
+ * The three entries the reference puts on its home screen: search, a new quick note, and AI. The
+ * middle one carries the weight, because capturing is what the phone is for.
+ */
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--space-2);
+}
+
+.home-action {
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: var(--space-1);
+  gap: var(--space-2);
+  min-height: 88px;
+  padding: var(--space-3) var(--space-2);
+  background: var(--surface);
+  border-radius: var(--radius-md);
   font-size: var(--text-xs);
-  font-weight: 500;
+  font-weight: 560;
   color: var(--muted);
-  position: relative;
-  transition: color var(--dur-2) var(--ease-out);
+  box-shadow: var(--elev-1);
 }
 
-/* The selected tab is marked by a short bar as well as colour: colour alone is a weak signal, and
-   it is the only one the previous version had. */
-.tabbar button::before {
-  content: "";
-  position: absolute;
-  top: 0;
-  left: 50%;
-  width: 24px;
-  height: 2px;
-  border-radius: 0 0 2px 2px;
-  background: var(--accent);
-  transform: translateX(-50%) scaleX(0);
-  transition: transform var(--dur-2) var(--ease-out);
-}
-
-.tabbar button[aria-selected="true"] {
+.home-action .home-action-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-pill);
+  background: var(--surface-2);
   color: var(--accent);
 }
 
-.tabbar button[aria-selected="true"]::before {
-  transform: translateX(-50%) scaleX(1);
+/* Only one of the three is the primary act, so only one is filled. */
+.home-action.primary-action {
+  background: var(--accent);
+  color: var(--accent-ink);
 }
 
-.tabbar .icon {
-  width: 21px;
-  height: 21px;
+.home-action.primary-action .home-action-icon {
+  background: rgb(0 0 0 / 14%);
+  color: inherit;
+}
+
+/* Balances the centred segmented control against the trailing overflow button. */
+.appbar-spacer {
+  flex: 0 0 var(--tap);
+  width: var(--tap);
+}
+
+/* ----------------------------------------------------------- section head */
+
+.section-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--space-3);
+  font-size: var(--text-xs);
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  padding: var(--space-4) var(--space-1) var(--space-2);
+}
+
+.section-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ------------------------------------------------------------------- rows */
+
+.row {
+  flex-direction: row;
+  align-items: center;
+  gap: var(--space-3);
+  text-align: left;
+}
+
+.note-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  color: var(--muted);
+}
+
+.note-icon .icon {
+  width: 18px;
+  height: 18px;
+}
+
+.note-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+/* ------------------------------------------------------------------- grid */
+
+/* The reference's 书架 view: the same children, two per row, as cards. */
+.grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--space-3);
+}
+
+.card {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: var(--space-3);
+  padding: var(--space-4);
+  min-height: 108px;
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  text-align: left;
+  box-shadow: var(--elev-1);
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
+}
+
+.card:active {
+  transform: scale(0.985);
+  background: var(--surface-2);
+}
+
+.card .note-text {
+  gap: var(--space-1);
+}
+
+.card .title {
+  font-weight: 600;
+  font-size: var(--text-sm);
+  line-height: var(--leading-tight);
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.card .meta {
+  font-size: var(--text-xs);
+  color: var(--faint);
 }
 
 /* ----------------------------------------------------------------- capture */
@@ -396,7 +612,7 @@ textarea:focus {
   box-shadow: none;
   background: transparent;
   padding: var(--space-2) 0;
-  /* 44px, the same floor every other control here keeps. At 40 it measured 42 and failed it. */
+  /* 44px, the same floor every other control here keeps. */
   min-height: var(--tap);
   font-size: var(--text-md);
   font-weight: 600;
@@ -765,7 +981,7 @@ p.note code {
 
 .detail-toolbar button {
   padding: var(--space-2) var(--space-4);
-  min-height: 38px;
+  min-height: var(--tap);
   font-size: var(--text-sm);
   background: transparent;
   color: var(--muted);
@@ -826,7 +1042,7 @@ p.note code {
 .ink-toolbar button {
   flex: 0 0 auto;
   padding: var(--space-2) var(--space-3);
-  min-height: 38px;
+  min-height: var(--tap);
   font-size: var(--text-sm);
 }
 
@@ -1002,4 +1218,218 @@ p.note code {
   .detail .body {
     padding: var(--space-6) var(--space-6) var(--space-8);
   }
+}
+
+/* ------------------------------------------------------------------ sheet */
+
+/*
+ * The reference's own pattern for options: a bottom sheet of labelled groups, each showing its
+ * current value inline, dismissed by `取消` or by the backdrop.
+ */
+.sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: flex;
+  align-items: flex-end;
+  background: rgb(0 0 0 / 42%);
+  animation: fade-in var(--dur-2) var(--ease-out);
+}
+
+.sheet {
+  width: 100%;
+  max-height: 82vh;
+  overflow-y: auto;
+  background: var(--bg);
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  padding: var(--space-5) var(--space-4) calc(var(--safe-bottom) + var(--space-4));
+  box-shadow: var(--elev-3);
+  animation: sheet-up var(--dur-3) var(--ease-out);
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes sheet-up {
+  from {
+    transform: translateY(16px);
+  }
+}
+
+.sheet-group {
+  margin-bottom: var(--space-5);
+}
+
+.sheet-label {
+  font-size: var(--text-xs);
+  font-weight: 600;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  margin-bottom: var(--space-2);
+  padding-left: var(--space-1);
+}
+
+.sheet .segmented button {
+  color: var(--muted);
+}
+
+.sheet .segmented button::before {
+  inset: 2px 0;
+  background: var(--surface);
+}
+
+.sheet .segmented button[aria-selected="true"] {
+  color: var(--accent-ink);
+  font-weight: 600;
+}
+
+.sheet .segmented button[aria-selected="true"]::before {
+  background: var(--accent);
+}
+
+.sheet-action {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+  width: 100%;
+  min-height: var(--tap);
+  padding: var(--space-3) var(--space-4);
+  margin-bottom: var(--space-2);
+  background: var(--surface);
+  border-radius: var(--radius-md);
+  text-align: left;
+  box-shadow: var(--elev-1);
+}
+
+.sheet-action .icon {
+  width: 18px;
+  height: 18px;
+  color: var(--muted);
+}
+
+.sheet-action span:first-of-type {
+  flex: 1 1 auto;
+}
+
+.sheet-action .sheet-value {
+  flex: 0 1 auto;
+  font-size: var(--text-xs);
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 45%;
+}
+
+.sheet-cancel {
+  width: 100%;
+  min-height: var(--tap);
+  background: transparent;
+  color: var(--muted);
+}
+
+/* ----------------------------------------------------------------- screens */
+
+/* A screen of its own, above everything: the reference uses this for both the editor and search. */
+.screen {
+  position: fixed;
+  inset: 0;
+  z-index: 45;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  padding-left: var(--safe-left);
+  padding-right: var(--safe-right);
+  animation: panel-in var(--dur-3) var(--ease-out);
+}
+
+.screen .appbar {
+  gap: var(--space-2);
+  padding-left: var(--space-3);
+  padding-right: var(--space-3);
+}
+
+.screen-title {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: center;
+  font-size: var(--text-base);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen .view {
+  padding: var(--space-4);
+}
+
+/* An editor with a borderless body: the text is the interface. */
+#editor-title {
+  box-shadow: none;
+  background: transparent;
+  padding: var(--space-2) 0;
+  min-height: var(--tap);
+  font-size: var(--text-md);
+  font-weight: 600;
+}
+
+#editor-title:focus {
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+#editor-body {
+  box-shadow: none;
+  background: transparent;
+  padding: var(--space-2) 0;
+  margin-top: var(--space-3);
+  min-height: 46vh;
+  resize: none;
+  font-size: var(--text-reading);
+  line-height: var(--leading-reading);
+}
+
+#editor-body:focus {
+  box-shadow: none;
+}
+
+/* ------------------------------------------------------------ search bar */
+
+.search-bar {
+  gap: var(--space-2);
+}
+
+.search-field {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  padding: 0 var(--space-3);
+  min-height: var(--tap);
+  background: var(--surface-2);
+  border-radius: var(--radius-pill);
+  color: var(--faint);
+}
+
+.search-field .icon {
+  width: 16px;
+  height: 16px;
+}
+
+.search-field input {
+  flex: 1 1 auto;
+  min-width: 0;
+  box-shadow: none;
+  background: transparent;
+  padding: 0;
+  min-height: var(--tap);
+  font-size: var(--text-base);
+}
+
+.search-field input:focus {
+  box-shadow: none;
 }

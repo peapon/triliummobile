@@ -17,7 +17,24 @@ import { hasNativeBridge, nativeFetch } from "./native-fetch.js";
 import { WorkerClient, type AppCounts, type ProgressEvent } from "./rpc.js";
 import "./style.css";
 
-type Tab = "capture" | "search" | "browse";
+/**
+ * Two tabs, matching the reference: quick notes and the tree.
+ *
+ * Was three (`capture` / `search` / `browse`) in a bottom tab bar. The reference puts its two
+ * sections in a **centred segmented control at the top** and has no bottom bar at all, which is the
+ * single biggest structural difference this refactor makes. Search is not a tab there either — it is
+ * a full screen entered from the bar.
+ */
+type Tab = "notes" | "library";
+
+/** The same children rendered two ways, switched from the options sheet. */
+type LayoutMode = "list" | "grid";
+
+/** Sort keys Trilium already has; nothing new is offered. */
+type SortKey = "modified" | "created" | "title";
+
+/** Bottom sheets, the reference's pattern for options and for creating. */
+type Sheet = "none" | "view";
 
 interface AppState {
   tab: Tab;
@@ -40,6 +57,24 @@ interface AppState {
   hasInk: boolean;
   /** The settings screen is a navigation step, so the back gesture closes it. */
   settingsOpen: boolean;
+  /** List or grid, for the same collection of children. */
+  layout: LayoutMode;
+  sort: SortKey;
+  /** Which bottom sheet is up, if any. */
+  sheet: Sheet;
+  /** The note ids walked into, root first. Empty means the tree root. */
+  libraryPath: string[];
+  /** Titles for the walked path, so a breadcrumb needs no extra query. */
+  libraryTitles: string[];
+  /** The full-screen editor, entered from the capture bar. */
+  editorOpen: boolean;
+  editorTitle: string;
+  editorBody: string;
+  /** Search is a screen of its own, not a tab. */
+  searchOpen: boolean;
+  /** The AI chat list, opened from the home action row. */
+  aiOpen: boolean;
+  searchQuery: string;
 }
 
 type DetailMode = "view" | "edit" | "ink";
@@ -55,7 +90,7 @@ function isPad(): boolean {
 const ROOT_NOTE_ID = "root";
 
 const state: AppState = {
-  tab: "capture",
+  tab: "notes",
   query: "",
   browsePath: [ROOT_NOTE_ID],
   openNoteId: null,
@@ -70,7 +105,18 @@ const state: AppState = {
   detailMode: "view",
   inkDirty: false,
   hasInk: false,
-  settingsOpen: false
+  settingsOpen: false,
+  layout: "list",
+  sort: "modified",
+  sheet: "none",
+  libraryPath: [],
+  libraryTitles: [],
+  editorOpen: false,
+  editorTitle: "",
+  editorBody: "",
+  searchOpen: false,
+  searchQuery: "",
+  aiOpen: false
 };
 
 let inkCanvas: InkCanvas | null = null;
@@ -186,8 +232,32 @@ function stepBack(): boolean {
     return true;
   }
 
+  if (state.sheet === "view") {
+    state.sheet = "none";
+    void render();
+    return true;
+  }
+
   if (state.settingsOpen) {
     state.settingsOpen = false;
+    void render();
+    return true;
+  }
+
+  if (state.aiOpen) {
+    state.aiOpen = false;
+    void render();
+    return true;
+  }
+
+  if (state.searchOpen) {
+    state.searchOpen = false;
+    void render();
+    return true;
+  }
+
+  if (state.editorOpen) {
+    state.editorOpen = false;
     void render();
     return true;
   }
@@ -477,8 +547,11 @@ async function render(): Promise<void> {
   commit(`
     ${renderAppbar()}
     <div class="view" id="view">${view}</div>
-    ${renderTabbar()}
     ${detail}
+    ${renderSheet()}
+    ${renderEditor()}
+    ${renderSearchScreen()}
+    ${await renderAiScreen()}
   `);
 
   measureAppBar();
@@ -512,128 +585,381 @@ function measureAppBar(): void {
  * The long message is not lost — it goes to a toast, which is where a transient sentence belongs.
  * What stays here is only what is actionable at a glance.
  */
+/**
+ * The top bar: a centred segmented control, a search entry, and an overflow.
+ *
+ * Modelled on the reference, where every screen carries the same centred `小记 | 知识库` control and
+ * nothing else persistent. The app name is gone from here — it occupied the only flexible space in a
+ * bar that now has none to spare, and the user already knows which app they opened.
+ *
+ * Sync and settings moved into the options sheet rather than crowding the bar, which is where the
+ * reference keeps its own miscellaneous actions.
+ */
 function renderAppbar(): string {
+  const segment = (id: Tab, label: string) =>
+    `<button data-tab="${id}" role="tab" aria-selected="${state.tab === id}">${label}</button>`;
+
+  return `
+    <div class="appbar">
+      <span class="appbar-spacer"></span>
+      <div class="segmented" role="tablist">
+        ${segment("notes", "速记")}
+        ${segment("library", "知识库")}
+      </div>
+      <button id="open-sheet" class="icon-only ghost" aria-label="更多">${icon("more", "icon-lg")}</button>
+    </div>
+    ${renderStatusStrip()}
+  `;
+}
+
+/**
+ * A thin line under the bar, shown only when there is something to say.
+ *
+ * Sync state has to live somewhere, and the reference's own answer — put it behind `⋯` — would hide
+ * a pending backlog. A strip that appears only when work is owed, in flight, or failed keeps the
+ * information without costing the resting state anything.
+ */
+function renderStatusStrip(): string {
   const label = state.syncing
-    ? "同步中"
+    ? state.progress?.message || "同步中…"
     : state.pending > 0
-      ? `${state.pending} 待同步`
+      ? `${state.pending} 项待同步`
       : !state.lastOk && state.lastMessage
         ? "同步失败"
         : "";
 
-  const statusClass = state.syncing ? "busy" : state.lastOk ? "ok" : "bad";
+  if (!label) return `<div id="status" class="status-strip" hidden></div>`;
+
+  const cls = state.syncing ? "busy" : state.lastOk ? "ok" : "bad";
+  return `<div id="status" class="status-strip ${cls}">${escapeHtml(label)}</div>`;
+}
+
+/**
+ * The two tabs.
+ *
+ * `notes` is the quick-note surface: an entry into the editor, then the most recently touched notes.
+ * `library` is Trilium's tree, walked one level at a time — the reference's drill-down.
+ */
+async function renderView(): Promise<string> {
+  return state.tab === "notes" ? renderNotes() : renderLibrary();
+}
+
+/**
+ * 速记 — capture, then what was captured recently.
+ *
+ * The capture entry is a bar rather than a form: tapping it opens the full-screen editor, which is
+ * the reference's flow and also the right one for a phone. The form-with-a-save-button it replaces
+ * spent a third of the screen on chrome before a single character was typed.
+ */
+async function renderNotes(): Promise<string> {
+  const notes = sortNotes(await api.recent(60));
+  const counts = await api.counts();
+
+  const empty = `
+    <div class="empty">
+      还没有笔记。<br />点上面的输入框记第一条。
+    </div>`;
 
   return `
-    <div class="appbar">
-      <h1>TriliumMobile</h1>
-      ${label ? `<span class="status ${statusClass}" id="status">${escapeHtml(label)}</span>` : `<span class="status ${statusClass}" id="status" hidden></span>`}
-      <button id="sync" ${state.syncing ? "disabled" : ""}>${state.syncing ? "…" : "同步"}</button>
-      <button id="settings" class="icon-only" aria-label="设置">${icon("settings", "icon-lg")}</button>
+    <div class="home-actions">
+      <button id="open-search" class="home-action">
+        <span class="home-action-icon">${icon("search", "icon-lg")}</span>
+        <span>搜索</span>
+      </button>
+
+      <button id="open-editor" class="home-action primary-action">
+        <span class="home-action-icon">${icon("plus", "icon-lg")}</span>
+        <span>新建速记</span>
+      </button>
+
+      <button id="open-ai" class="home-action">
+        <span class="home-action-icon">${icon("ai", "icon-lg")}</span>
+        <span>AI 笔记</span>
+      </button>
     </div>
+
+    <div class="section-head">
+      <span>最近</span>
+      <span class="section-count">${counts.notes.toLocaleString("en-US")} 条</span>
+    </div>
+
+    ${notes.length === 0 ? empty : renderNoteCollection(notes, "notes")}
   `;
 }
 
-function renderTabbar(): string {
-  const tab = (id: Tab, iconName: string, label: string) =>
-    `<button data-tab="${id}" aria-selected="${state.tab === id}">
-       ${icon(iconName)}<span>${label}</span>
-     </button>`;
+/**
+ * 知识库 — the note tree, one level at a time.
+ *
+ * The parent is whichever book was walked into; the root when nothing has been. A `book` descends,
+ * anything else opens. That is exactly what a tree is, so no new concept is introduced.
+ */
+async function renderLibrary(): Promise<string> {
+  const parentNoteId = state.libraryPath[state.libraryPath.length - 1] ?? "root";
+  const children = sortNotes(await api.childrenOf(parentNoteId));
 
-  return `<nav class="tabbar">
-    ${tab("capture", "write", "速记")}
-    ${tab("search", "search", "速查")}
-    ${tab("browse", "browse", "浏览")}
-  </nav>`;
+  const crumbs = state.libraryPath
+    .map((_, index) => `<span data-crumb="${index}">${escapeHtml(state.libraryTitles[index] ?? "…")}</span>`)
+    .join(`<span class="sep">/</span>`);
+
+  const empty = `
+    <div class="empty">
+      这个目录是空的。<br />在速记里新建一条，或换个目录。
+    </div>`;
+
+  return `
+    ${state.libraryPath.length > 0 ? `<div class="crumbs"><span data-crumb="root">知识库</span><span class="sep">/</span>${crumbs}</div>` : ""}
+
+    <div class="section-head">
+      <span>${state.libraryPath.length === 0 ? "全部" : escapeHtml(state.libraryTitles[state.libraryTitles.length - 1] ?? "")}</span>
+      <span class="section-count">${children.length} 项</span>
+    </div>
+
+    ${children.length === 0 ? empty : renderNoteCollection(children, "library")}
+  `;
 }
 
-async function renderView(): Promise<string> {
-  switch (state.tab) {
-    case "capture":
-      return renderCapture(await api.counts());
-    case "search":
-      return renderSearch();
-    case "browse":
-      return renderBrowse();
+/** Apply the sheet's sort choice. Titles sort with `localeCompare` so Chinese orders sensibly. */
+function sortNotes(notes: NoteSummary[]): NoteSummary[] {
+  const sorted = [...notes];
+
+  switch (state.sort) {
+    case "created":
+      // `utcDateCreated` is not on the summary, so fall back to id order, which Trilium assigns
+      // monotonically. Honest about what the data supports rather than faking a date.
+      sorted.sort((a, b) => (a.noteId < b.noteId ? 1 : -1));
+      return sorted;
+    case "title":
+      sorted.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
+      return sorted;
+    default:
+      sorted.sort((a, b) => (a.utcDateModified < b.utcDateModified ? 1 : -1));
+      return sorted;
   }
 }
 
-function renderCapture(counts: AppCounts): string {
+/**
+ * A collection of notes, as a list or a grid.
+ *
+ * One renderer for both surfaces and both layouts, so the two tabs cannot drift apart.
+ */
+function renderNoteCollection(notes: NoteSummary[], context: "notes" | "library"): string {
+  const cards = notes.map((note) => renderNoteCard(note, context));
+
+  if (state.layout === "grid") {
+    return `<div class="grid">${cards.join("")}</div>`;
+  }
+
+  return `<div class="list">${cards.join("")}</div>`;
+}
+
+/**
+ * One note.
+ *
+ * A `book` descends when tapped; anything else opens. The trailing count is the only difference
+ * between the two, which is the reference's own treatment.
+ */
+function renderNoteCard(note: NoteSummary, context: "notes" | "library"): string {
+  const kind = noteKind(note.type);
+  const descends = context === "library" && note.type === "book";
+
+  const className = state.layout === "grid" ? "card" : "row";
+  const target = descends ? `data-into="${note.noteId}"` : `data-open="${note.noteId}"`;
+
   return `
-    <div class="quick-note">
-      <input id="capture-title" placeholder="标题（可留空）" autocomplete="off" enterkeyhint="next" />
-      <textarea id="capture-body" placeholder="随手记点什么…" enterkeyhint="enter"></textarea>
-      <div class="capture-actions">
-        <span class="hint">${counts.notes.toLocaleString("en-US")} 条笔记 · ⌘/Ctrl+Enter 保存</span>
-        <button class="primary" id="capture-save" ${state.busy ? "disabled" : ""}>保存</button>
+    <button class="${className}" ${target} data-note-id="${note.noteId}">
+      <span class="note-icon">${icon(kind)}</span>
+      <span class="note-text">
+        <span class="title">${escapeHtml(note.title || "无标题")}</span>
+        <span class="meta">${escapeHtml(describeNote(note, descends))}</span>
+      </span>
+    </button>
+  `;
+}
+
+/** Map a Trilium note type to one of the bundled icons. */
+function noteKind(type: string): string {
+  switch (type) {
+    case "book":
+      return "book";
+    case "code":
+      return "code";
+    case "image":
+      return "image";
+    case "file":
+      return "file";
+    case "canvas":
+      return "canvas";
+    default:
+      return "note";
+  }
+}
+
+/** `更新 3月5日` for a note, `N 个子笔记` for a book. */
+function describeNote(note: NoteSummary, descends: boolean): string {
+  if (descends) return "目录";
+
+  const date = note.utcDateModified?.slice(0, 10).replace(/-/g, "/") ?? "";
+  return date ? `更新 ${date}` : note.type;
+}
+
+
+/**
+ * The options sheet.
+ *
+ * The reference's screen 8 is a bottom sheet of labelled groups, each showing its current value
+ * inline, dismissed by `取消`. Sync and settings live here because the top bar no longer has room
+ * for them and the reference keeps its own miscellaneous actions behind an overflow too.
+ *
+ * Wrapped in a `<form>` so iOS and the shell offer a dismiss affordance; `method="dialog"` would not
+ * help in a WebView, so closing is handled by the button and by the backdrop.
+ */
+function renderSheet(): string {
+  if (state.sheet !== "view") return "";
+
+  const choice = (group: string, value: string, label: string) =>
+    `<button data-choice="${group}" data-value="${value}" aria-selected="${state[group as "layout" | "sort"] === value}">${label}</button>`;
+
+  return `
+    <div class="sheet-backdrop" id="sheet-backdrop">
+      <div class="sheet" role="dialog" aria-label="显示选项">
+        <div class="sheet-group">
+          <div class="sheet-label">布局</div>
+          <div class="segmented">
+            ${choice("layout", "list", "列表")}
+            ${choice("layout", "grid", "网格")}
+          </div>
+        </div>
+
+        <div class="sheet-group">
+          <div class="sheet-label">排序方式</div>
+          <div class="segmented">
+            ${choice("sort", "modified", "按更新时间")}
+            ${choice("sort", "created", "按创建时间")}
+            ${choice("sort", "title", "按标题")}
+          </div>
+        </div>
+
+        <div class="sheet-group">
+          <button class="sheet-action" id="sheet-sync" ${state.syncing ? "disabled" : ""}>
+            ${icon("sync")}<span>立即同步</span>
+            ${state.pending > 0 ? `<span class="sheet-value">${state.pending} 项待同步</span>` : ""}
+          </button>
+          <button class="sheet-action" id="sheet-settings">
+            ${icon("settings")}<span>设置</span>
+            <span class="sheet-value">${escapeHtml(state.serverHost ?? "未配置")}</span>
+          </button>
+        </div>
+
+        <button class="sheet-cancel" id="sheet-cancel">取消</button>
       </div>
     </div>
   `;
 }
 
-async function renderSearch(): Promise<string> {
-  const results = state.query.trim() ? await api.search(state.query) : await api.recent(30);
-
-  const heading = state.query.trim()
-    ? `${results.length} 条结果`
-    : `最近修改 · ${results.length}`;
-
-  const body =
-    results.length === 0
-      ? `<div class="empty">没有匹配的笔记。<br />搜索在本地进行，标题和正文都会命中。</div>`
-      : `<div class="list">${await renderRows(results)}</div>`;
+/**
+ * The full-screen editor.
+ *
+ * The reference's screen 4: `×` to abandon at the left, `完成` to keep at the right, and nothing
+ * else competing with the text. Replaces an inline form whose label, banner and hint left about
+ * half the screen for the note itself.
+ */
+function renderEditor(): string {
+  if (!state.editorOpen) return "";
 
   return `
-    <input id="search-input" type="search" placeholder="搜索标题与正文…" value="${escapeAttr(state.query)}"
-           autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" />
-    <div class="section-head">${escapeHtml(heading)}</div>
-    ${body}
+    <div class="screen" id="editor-screen">
+      <div class="appbar">
+        <button id="editor-cancel" class="icon-only ghost" aria-label="放弃">${icon("close", "icon-lg")}</button>
+        <span class="screen-title">新建速记</span>
+        <button id="editor-save" class="primary">完成</button>
+      </div>
+
+      <div class="view">
+        <input id="editor-title" placeholder="标题（可留空）" value="${escapeAttr(state.editorTitle)}" autocomplete="off" />
+        <textarea id="editor-body" placeholder="记你想记…" autofocus>${escapeHtml(state.editorBody)}</textarea>
+      </div>
+    </div>
   `;
 }
 
-async function renderBrowse(): Promise<string> {
-  const current = state.browsePath[state.browsePath.length - 1] ?? ROOT_NOTE_ID;
-  const [children, trail] = await Promise.all([api.childrenOf(current), api.breadcrumb(current)]);
+/**
+ * Search, as a screen rather than a tab.
+ *
+ * The reference's screen 2: a field pinned at the top with `取消` beside it, results below. Search
+ * history is deliberately absent — it would be a new capability rather than a new arrangement of an
+ * existing one.
+ */
+function renderSearchScreen(): string {
+  if (!state.searchOpen) return "";
 
-  const crumbs = trail
-    .map((crumb, index) => `<span data-crumb="${index}">${escapeHtml(crumb.title)}</span>`)
-    .join(`<span class="sep">›</span>`);
-
-  const body =
-    children.length === 0
-      ? `<div class="empty">这个笔记没有子笔记。</div>`
-      : `<div class="list">${await renderRows(children, true)}</div>`;
-
-  return `<div class="crumbs">${crumbs}</div>${body}`;
+  return `
+    <div class="screen" id="search-screen">
+      <div class="appbar search-bar">
+        <div class="search-field">
+          ${icon("search")}
+          <input id="search-input" type="search" placeholder="搜索标题与正文…"
+                 value="${escapeAttr(state.searchQuery)}" autocomplete="off" autocorrect="off" spellcheck="false" />
+        </div>
+        <button id="search-cancel" class="ghost">取消</button>
+      </div>
+      <div class="view" id="search-results"></div>
+    </div>
+  `;
 }
 
-async function renderRows(notes: NoteSummary[], showTree = false): Promise<string> {
-  const rows = await Promise.all(
-    notes.map(async (note) => {
-      const [detail, kids] = await Promise.all([
-        api.getNote(note.noteId),
-        showTree ? api.childCount(note.noteId) : Promise.resolve(0)
-      ]);
+/**
+ * AI chats.
+ *
+ * Trilium has a real `llmChat` note type — a migration shows it was once a code note and became a
+ * type of its own — plus `/api/special-notes/llm-chat` and a streaming endpoint behind it. So this
+ * is an arrangement of something Trilium already has, not an invented capability.
+ *
+ * The list reads the **local replica**, which means it works offline and needs no server round trip.
+ * Starting a new chat does not: that goes through the server's LLM provider, so the screen says so
+ * rather than offering a button that cannot work.
+ */
+async function renderAiScreen(): Promise<string> {
+  if (!state.aiOpen) return "";
 
-      const snippet = detail ? toSnippet(detail.content) : "";
-      const meta = [
-        note.type !== "text" ? note.type : null,
-        kids > 0 ? `${kids} 个子笔记` : null,
-        formatDate(note.utcDateModified)
-      ]
-        .filter(Boolean)
-        .join(" · ");
+  // A failing query must not take the whole app down with it: the shell renders this eagerly.
+  const chats = sortNotes(await api.notesOfType("llmChat", 50).catch(() => []));
 
-      return `
-        <button class="row" data-note-id="${note.noteId}" data-is-dir="${showTree && kids > 0}">
-          <span class="title">${escapeHtml(note.title || "(无标题)")}</span>
-          ${snippet ? `<span class="snippet">${escapeHtml(snippet)}</span>` : ""}
-          <span class="meta">${escapeHtml(meta)}</span>
-        </button>
-      `;
-    })
-  );
+  const body =
+    chats.length === 0
+      ? `<div class="empty">
+           这台设备的副本里还没有 AI 对话。<br /><br />
+           Trilium 的 AI 对话需要服务端配置好模型提供方；<br />
+           配置后已有的对话会随同步出现在这里。
+         </div>`
+      : `<div class="list">${chats
+          .map(
+            (chat) => `
+        <button class="row" data-open="${chat.noteId}" data-note-id="${chat.noteId}">
+          <span class="note-icon">${icon("ai")}</span>
+          <span class="note-text">
+            <span class="title">${escapeHtml(chat.title || "无标题对话")}</span>
+            <span class="meta">${escapeHtml(describeNote(chat, false))}</span>
+          </span>
+        </button>`
+          )
+          .join("")}</div>`;
 
-  return rows.join("");
+  return `
+    <div class="screen" id="ai-screen">
+      <div class="appbar">
+        <button id="ai-back" class="icon-only ghost" aria-label="返回">${icon("back", "icon-lg")}</button>
+        <span class="screen-title">AI 笔记</span>
+        <span class="appbar-spacer"></span>
+      </div>
+      <div class="view">
+        <div class="section-head">
+          <span>对话</span>
+          <span class="section-count">${chats.length} 个</span>
+        </div>
+        ${body}
+      </div>
+    </div>
+  `;
 }
 
 async function renderDetail(noteId: string): Promise<string> {
@@ -779,7 +1105,9 @@ function renderContent(note: NoteDetail): string {
 // ---------------------------------------------------------------------- wire
 
 function wire(): void {
-  document.querySelectorAll<HTMLButtonElement>("[data-tab]").forEach((button) => {
+  // ---------------------------------------------------------------- navigation
+
+  document.querySelectorAll<HTMLButtonElement>(".segmented [data-tab]").forEach((button) => {
     button.addEventListener("click", () => {
       state.tab = button.dataset.tab as Tab;
       state.openNoteId = null;
@@ -788,22 +1116,141 @@ function wire(): void {
     });
   });
 
-  document.getElementById("sync")?.addEventListener("click", () => void runSync(true));
-  document.getElementById("settings")?.addEventListener("click", () => {
+  /** Descend into a book, remembering its title so the breadcrumb needs no query. */
+  document.querySelectorAll<HTMLElement>("[data-into]").forEach((card) => {
+    card.addEventListener("click", () => {
+      const noteId = card.dataset.into!;
+      const title = card.querySelector(".title")?.textContent ?? "";
+      state.libraryPath = [...state.libraryPath, noteId];
+      state.libraryTitles = [...state.libraryTitles, title];
+      pushStep();
+      void render();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-open]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.openNoteId = card.dataset.open!;
+      pushStep();
+      void render();
+    });
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-crumb]").forEach((crumb) => {
+    crumb.addEventListener("click", () => {
+      const at = crumb.dataset.crumb;
+      const depth = at === "root" ? 0 : Number(at) + 1;
+      state.libraryPath = state.libraryPath.slice(0, depth);
+      state.libraryTitles = state.libraryTitles.slice(0, depth);
+      void render();
+    });
+  });
+
+  // --------------------------------------------------------------- the sheet
+
+  document.getElementById("open-sheet")?.addEventListener("click", () => {
+    state.sheet = "view";
+    pushStep();
+    void render();
+  });
+
+  document.getElementById("sheet-cancel")?.addEventListener("click", () => history.back());
+  document.getElementById("sheet-backdrop")?.addEventListener("click", (event) => {
+    // Only the backdrop itself closes it; taps inside the sheet must not.
+    if (event.target === event.currentTarget) history.back();
+  });
+
+  document.querySelectorAll<HTMLElement>("[data-choice]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const group = button.dataset.choice as "layout" | "sort";
+      state[group] = button.dataset.value as never;
+
+      // Picking closes the sheet, the way the reference's rows do: choose, and you are returned.
+      // Closing is left to `stepBack` — clearing `sheet` here first would leave it with nothing to
+      // do, and the new layout would never be rendered.
+      if (history.state?.triliumStep) history.back();
+      else {
+        state.sheet = "none";
+        void render();
+      }
+    });
+  });
+
+  document.getElementById("sheet-sync")?.addEventListener("click", () => {
+    state.sheet = "none";
+    void runSync(true);
+  });
+
+  document.getElementById("sheet-settings")?.addEventListener("click", () => {
+    state.sheet = "none";
     state.settingsOpen = true;
     pushStep();
     void renderSettings();
   });
 
-  wireCapture();
-  wireSearch();
+  // -------------------------------------------------------------- the editor
 
-  document.querySelectorAll<HTMLElement>("[data-crumb]").forEach((crumb) => {
-    crumb.addEventListener("click", () => {
-      state.browsePath = state.browsePath.slice(0, Number(crumb.dataset.crumb) + 1);
+  document.getElementById("open-editor")?.addEventListener("click", () => {
+    state.editorOpen = true;
+    state.editorTitle = "";
+    state.editorBody = "";
+    pushStep();
+    void render();
+  });
+
+  document.getElementById("editor-cancel")?.addEventListener("click", () => history.back());
+
+  document.getElementById("editor-save")?.addEventListener("click", () => {
+    void saveFromEditor();
+  });
+
+  // `⌘/Ctrl + Enter` keeps the keyboard shortcut the inline form had.
+  document.getElementById("editor-body")?.addEventListener("keydown", (event) => {
+    const keyboard = event as KeyboardEvent;
+    if (keyboard.key === "Enter" && (keyboard.metaKey || keyboard.ctrlKey)) {
+      keyboard.preventDefault();
+      void saveFromEditor();
+    }
+  });
+
+  // -------------------------------------------------------------- the search
+
+  document.getElementById("open-search")?.addEventListener("click", () => {
+    state.searchOpen = true;
+    state.searchQuery = "";
+    pushStep();
+    void render().then(() => document.getElementById("search-input")?.focus());
+  });
+
+  document.getElementById("search-cancel")?.addEventListener("click", () => history.back());
+
+  // ----------------------------------------------------------------- the AI
+
+  document.getElementById("open-ai")?.addEventListener("click", () => {
+    state.aiOpen = true;
+    pushStep();
+    void render();
+  });
+
+  document.getElementById("ai-back")?.addEventListener("click", () => history.back());
+
+  document.querySelectorAll<HTMLElement>("#ai-screen [data-open]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.aiOpen = false;
+      state.openNoteId = card.dataset.open!;
+      pushStep();
       void render();
     });
   });
+
+  const searchInput = document.getElementById("search-input") as HTMLInputElement | null;
+  if (searchInput) {
+    searchInput.addEventListener("input", () => {
+      state.searchQuery = searchInput.value;
+      void renderSearchResults();
+    });
+    if (state.searchQuery) void renderSearchResults();
+  }
 
   document.getElementById("detail-back")?.addEventListener("click", () => {
     // Go through history so the hardware back button and this button share one stack.
@@ -813,12 +1260,72 @@ function wire(): void {
   if (state.openNoteId) void wireDetail(state.openNoteId);
 }
 
-/**
- * Wire the note-detail view.
- *
- * The ink canvas is created here rather than in the markup because it has to measure its own box,
- * which only exists once the markup is in the document.
- */
+/** Write the editor's contents as a note, then leave. */
+async function saveFromEditor(): Promise<void> {
+  const titleInput = document.getElementById("editor-title") as HTMLInputElement | null;
+  const bodyInput = document.getElementById("editor-body") as HTMLTextAreaElement | null;
+
+  const title = (titleInput?.value ?? state.editorTitle).trim();
+  const body = bodyInput?.value ?? state.editorBody;
+
+  if (!title && !body.trim()) {
+    showToast("什么都没写", true);
+    return;
+  }
+
+  state.busy = true;
+
+  try {
+    // A note with no title takes its first line, which is what a quick note is.
+    const resolved = title || body.trim().split("\n")[0]!.slice(0, 80);
+    const inbox = await api.inboxNoteId();
+
+    await api.createTextNote({
+      parentNoteId: inbox,
+      title: resolved,
+      content: `<p>${escapeHtml(body.trim()).replace(/\n/g, "</p><p>")}</p>`
+    });
+
+    state.editorOpen = false;
+    state.editorTitle = "";
+    state.editorBody = "";
+    history.back();
+
+    await refreshChrome();
+    showToast("已保存，等待同步", false);
+    await render();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), true);
+  } finally {
+    state.busy = false;
+  }
+}
+
+/** The search screen's body, rendered on its own so typing does not re-render the whole app. */
+async function renderSearchResults(): Promise<void> {
+  const container = document.getElementById("search-results");
+  if (!container) return;
+
+  const query = state.searchQuery.trim();
+  const results = await api.search(query, 60);
+
+  if (results.length === 0) {
+    container.innerHTML = `<div class="empty">没有匹配的笔记。<br />搜索在本地进行，标题和正文都会命中。</div>`;
+    return;
+  }
+
+  container.innerHTML = renderNoteCollection(sortNotes(results), "notes");
+  // The collection is new markup, so its handlers have to be attached again.
+  container.querySelectorAll<HTMLElement>("[data-open]").forEach((card) => {
+    card.addEventListener("click", () => {
+      state.searchOpen = false;
+      state.openNoteId = card.dataset.open!;
+      pushStep();
+      void render();
+    });
+  });
+}
+
 async function wireDetail(noteId: string): Promise<void> {
   const canvas = document.getElementById("ink-layer") as HTMLCanvasElement | null;
 
@@ -973,105 +1480,6 @@ function updateInkHint(): void {
     ? "已识别到手写笔"
     : "用笔或手指书写";
 }
-
-function wireCapture(): void {
-  const titleInput = document.getElementById("capture-title") as HTMLInputElement | null;
-  const bodyInput = document.getElementById("capture-body") as HTMLTextAreaElement | null;
-  if (!titleInput || !bodyInput) return;
-
-  const saveNote = async () => {
-    const rawBody = bodyInput.value.trim();
-    const rawTitle = titleInput.value.trim();
-
-    if (rawBody === "" && rawTitle === "") {
-      showToast("写点什么再保存", true);
-      return;
-    }
-
-    state.busy = true;
-
-    try {
-      const inbox = await api.inboxNoteId();
-      const title = rawTitle || firstLine(rawBody) || "速记";
-      const content =
-        rawBody === ""
-          ? "<p></p>"
-          : `<p>${escapeHtml(rawBody).replace(/\n{2,}/g, "</p><p>").replace(/\n/g, "<br />")}</p>`;
-
-      await api.createTextNote({ parentNoteId: inbox, title, content });
-      await refreshChrome();
-      showToast("已保存到本地，等待同步", false);
-    } catch (error) {
-      showToast(error instanceof Error ? error.message : String(error), true);
-    } finally {
-      state.busy = false;
-      await render();
-
-      // render() rebuilt the DOM, so focus the fresh textarea to keep capture a rapid loop.
-      (document.getElementById("capture-body") as HTMLTextAreaElement | null)?.focus();
-    }
-  };
-
-  document.getElementById("capture-save")?.addEventListener("click", () => void saveNote());
-
-  bodyInput.addEventListener("keydown", (event) => {
-    if ((event.metaKey || event.ctrlKey) && event.key === "Enter") void saveNote();
-  });
-
-  requestAnimationFrame(() => {
-    if (document.activeElement?.tagName !== "INPUT" && document.activeElement?.tagName !== "TEXTAREA") {
-      bodyInput.focus();
-    }
-  });
-}
-
-function wireSearch(): void {
-  const input = document.getElementById("search-input") as HTMLInputElement | null;
-  if (!input) return;
-
-  let timer: number | undefined;
-
-  const rerender = async () => {
-    const caret = input.selectionStart ?? input.value.length;
-    await render();
-
-    const next = document.getElementById("search-input") as HTMLInputElement | null;
-    if (next) {
-      next.focus();
-      next.setSelectionRange(caret, caret);
-    }
-  };
-
-  input.addEventListener("input", () => {
-    state.query = input.value;
-    window.clearTimeout(timer);
-    timer = window.setTimeout(() => void rerender(), 140);
-  });
-
-  input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      state.query = input.value;
-      void render();
-    }
-  });
-}
-
-// Note rows are rebuilt on every render, so the handler lives on the container and is attached once.
-app.addEventListener("click", (event) => {
-  const row = (event.target as HTMLElement).closest<HTMLElement>("[data-note-id]");
-  if (!row) return;
-
-  const noteId = row.dataset.noteId as string;
-
-  if (row.dataset.isDir === "true" && state.tab === "browse") {
-    state.browsePath = [...state.browsePath, noteId];
-  } else {
-    state.openNoteId = noteId;
-    pushStep();
-  }
-
-  void render();
-});
 
 // ------------------------------------------------------------------- actions
 

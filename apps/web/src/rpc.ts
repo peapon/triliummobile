@@ -51,6 +51,8 @@ export interface AppApi {
   getNote(noteId: string): Promise<NoteDetail | null>;
   search(query: string, limit?: number): Promise<NoteSummary[]>;
   recent(limit?: number): Promise<NoteSummary[]>;
+  /** Notes of one Trilium type, for the AI chat list. */
+  notesOfType(type: string, limit?: number): Promise<NoteSummary[]>;
   createTextNote(options: { parentNoteId: string; title: string; content: string }): Promise<{ noteId: string }>;
   inboxNoteId(): Promise<string>;
   /** Replace a note's HTML — the tablet's light-editing path. */
@@ -186,6 +188,7 @@ export class WorkerClient implements AppApi {
   getNote = (noteId: string) => this.call("getNote", noteId);
   search = (query: string, limit?: number) => this.call("search", query, limit);
   recent = (limit?: number) => this.call("recent", limit);
+  notesOfType = (type: string, limit?: number) => this.call("notesOfType", type, limit);
 
   createTextNote = (options: { parentNoteId: string; title: string; content: string }) =>
     this.call("createTextNote", options);
