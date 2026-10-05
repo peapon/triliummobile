@@ -1111,7 +1111,7 @@ function renderEditor(): string {
         <span class="screen-title">新建速记</span>
         <button id="editor-image" class="ghost">${icon("image")} 图片</button>
         <button id="editor-file" class="ghost">${icon("paperclip")} 附件</button>
-        <button id="editor-save" class="primary">完成</button>
+        <button id="editor-save" class="primary" ${state.busy ? "disabled" : ""}>完成</button>
       </div>
 
       <div class="view">
@@ -1662,6 +1662,12 @@ async function readBytes(file: File): Promise<Uint8Array> {
 
 /** Write the editor's contents as a note, then leave. */
 async function saveFromEditor(): Promise<void> {
+  // A second tap while the first is still running must not make a second note. It used to: the
+  // button was never disabled, and the queue of attachments is emptied by the first save, so the
+  // duplicate arrived with the same title and none of the files.
+  if (state.busy) return;
+  state.busy = true;
+
   captureEditorDraft();
 
   const title = state.editorTitle.trim();
@@ -1671,8 +1677,6 @@ async function saveFromEditor(): Promise<void> {
     showToast("什么都没写", true);
     return;
   }
-
-  state.busy = true;
 
   try {
     // A note with no title takes its first line, which is what a quick note is.
