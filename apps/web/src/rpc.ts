@@ -79,6 +79,9 @@ export interface AppApi {
   loadInk(noteId: string): Promise<{ attachmentId: string | null; doc: string | null }>;
   saveInk(noteId: string, doc: string): Promise<{ attachmentId: string }>;
   maxBlobContentSize(): Promise<number>;
+  /** Unattended sync interval in seconds; 0 disables it. */
+  syncIntervalSeconds(): Promise<number>;
+  setSyncIntervalSeconds(seconds: number): Promise<void>;
   setMaxBlobContentSize(value: number): Promise<void>;
   /**
    * Fetch a stubbed note's content on demand. Returns whether anything was downloaded.
@@ -223,6 +226,8 @@ export class WorkerClient implements AppApi {
   loadInk = (noteId: string) => this.call("loadInk", noteId);
   saveInk = (noteId: string, doc: string) => this.call("saveInk", noteId, doc);
   maxBlobContentSize = () => this.call("maxBlobContentSize");
+  syncIntervalSeconds = () => this.call("syncIntervalSeconds");
+  setSyncIntervalSeconds = (seconds: number) => this.call("setSyncIntervalSeconds", seconds);
   setMaxBlobContentSize = (value: number) => this.call("setMaxBlobContentSize", value);
   fetchNoteBlob = (noteId: string) => this.call("fetchNoteBlob", noteId);
   listAttachments = (noteId: string) => this.call("listAttachments", noteId);

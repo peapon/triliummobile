@@ -44,6 +44,17 @@ type Sheet = "none" | "view";
 /** How many quick notes the 速记 list shows. The rest are reachable through the library. */
 const QUICK_NOTE_LIMIT = 50;
 
+/**
+ * How often to sync unattended, in seconds.
+ *
+ * Trilium's own default for `syncServerTimeout`, which despite the name is its polling interval —
+ * `getSyncTimeout()` reads the seconds out of the options table and multiplies by 1000, falling back
+ * to 120000ms. Kept in seconds for the same reason Trilium does: it is the unit a person picks.
+ */
+const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
+const MIN_SYNC_INTERVAL_SECONDS = 15;
+const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
+
 interface AppState {
   tab: Tab;
   query: string;
@@ -70,6 +81,8 @@ interface AppState {
   sort: SortKey;
   /** Which bottom sheet is up, if any. */
   sheet: Sheet;
+  /** Unattended sync interval in seconds. */
+  syncIntervalSeconds: number;
   /** The note ids walked into, root first. Empty means the tree root. */
   libraryPath: string[];
   /** Titles for the walked path, so a breadcrumb needs no extra query. */
@@ -119,6 +132,7 @@ const state: AppState = {
   layout: "list",
   sort: "position",
   sheet: "none",
+  syncIntervalSeconds: DEFAULT_SYNC_INTERVAL_SECONDS,
   libraryPath: [],
   libraryTitles: [],
   editorOpen: false,
@@ -537,6 +551,66 @@ function renderBootSkeleton(): void {
  * means in Trilium. Creating a separate image note per picture is not that.
  */
 let pendingImages: File[] = [];
+
+// ---------------------------------------------------------------- unattended sync
+
+/**
+ * Sync without being asked.
+ *
+ * Until now the only way to sync was the button in the options sheet, so notes captured offline sat
+ * in the local queue until their author remembered. That is the opposite of what an offline-first
+ * client is for.
+ *
+ * Three triggers, because each covers a case the others miss:
+ *
+ * - **on a timer**, so a device left open stays current — this is Trilium's own mechanism, its
+ *   `syncServerTimeout` poll;
+ * - **on returning to the foreground**, because on a phone a timer that fires while the app is
+ *   backgrounded is worth nothing;
+ * - **on regaining the network**, which is the moment a queued note can finally leave.
+ *
+ * Only one round runs at a time, and nothing happens while a sync is already in flight — `runSync`
+ * guards on `state.syncing` itself.
+ */
+let syncTimer: number | null = null;
+
+function startAutoSync(): void {
+  stopAutoSync();
+
+  // A foreground-only timer: no point waking to sync behind a screen the user is not looking at, and
+  // a background timer is unreliable on every mobile platform anyway.
+  syncTimer = window.setInterval(() => {
+    if (document.visibilityState === "visible") void runSync();
+  }, state.syncIntervalSeconds * 1000);
+}
+
+function stopAutoSync(): void {
+  if (syncTimer !== null) {
+    window.clearInterval(syncTimer);
+    syncTimer = null;
+  }
+}
+
+/** Re-read the interval and restart the timer. Called on boot and whenever the setting changes. */
+function applySyncInterval(): void {
+  if (state.syncIntervalSeconds > 0) startAutoSync();
+  else stopAutoSync();
+}
+
+/**
+ * Wire the triggers that are not a timer.
+ *
+ * Registered once, outside `wire()`, because they belong to the app rather than to a rendered view.
+ */
+function wireAutoSync(): void {
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible" && state.syncIntervalSeconds > 0) void runSync();
+  });
+
+  window.addEventListener("online", () => {
+    if (state.syncIntervalSeconds > 0) void runSync();
+  });
+}
 
 /** Small pieces of cross-view state, refreshed after actions rather than on every render. */
 async function refreshChrome(): Promise<void> {
@@ -1847,6 +1921,12 @@ async function renderSettings(): Promise<void> {
         下面的按钮只在你想手动清空时用。
       </div>
       <div class="field">
+        <label for="sync-interval">自动同步间隔（秒，0 = 关闭）</label>
+        <input id="sync-interval" type="number" inputmode="numeric" min="0" step="15"
+               value="${state.syncIntervalSeconds}" />
+      </div>
+
+      <div class="field">
         <label for="blob-cap">附件同步上限（字节，0 = 不限制）</label>
         <input id="blob-cap" type="number" inputmode="numeric" value="${cap}" />
       </div>
@@ -1861,6 +1941,16 @@ async function renderSettings(): Promise<void> {
   document.getElementById("save-settings")?.addEventListener("click", async () => {
     const value = Number((document.getElementById("blob-cap") as HTMLInputElement).value);
     await api.setMaxBlobContentSize(Number.isFinite(value) && value >= 0 ? value : 4 * 1024 * 1024);
+
+    const interval = Number((document.getElementById("sync-interval") as HTMLInputElement).value);
+    if (Number.isFinite(interval) && interval >= 0) {
+      // Zero is a legitimate choice — it means "only when I ask" — so it is honoured rather than
+      // treated as an absent value.
+      state.syncIntervalSeconds = Math.floor(interval);
+      await api.setSyncIntervalSeconds(state.syncIntervalSeconds);
+      applySyncInterval();
+    }
+
     showToast("已保存", false);
     await render();
   });

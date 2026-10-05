@@ -21,6 +21,9 @@ import { SyncEngine } from "../../../src/sync/engine.js";
 import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/transport.js";
 
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
+const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
+/** Trilium's own default for `syncServerTimeout`, which is its polling interval. */
+const DEFAULT_SYNC_INTERVAL_SECONDS = 120;
 
 const ROOT_NOTE_ID = "root";
 
@@ -539,6 +542,15 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
 
       return { attachmentId: created.attachmentId };
     }
+    case "syncIntervalSeconds": {
+      // Stored locally, like the blob budget: it is this device's polling choice, not vault data.
+      const raw = store.getOption(SYNC_INTERVAL_OPTION);
+      const parsed = raw === null ? NaN : Number(raw);
+      return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SYNC_INTERVAL_SECONDS;
+    }
+    case "setSyncIntervalSeconds":
+      store.setOption(SYNC_INTERVAL_OPTION, String(Math.max(0, Math.floor(Number(request.params[0]) || 0))));
+      return undefined;
     case "maxBlobContentSize":
       return maxBlobContentSize();
     case "setMaxBlobContentSize":
