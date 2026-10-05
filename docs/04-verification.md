@@ -27,6 +27,7 @@ pnpm exec tsx tools/e2e-web.ts                   # 31 browser checks against a r
 pnpm exec tsx tools/roundtrip.ts <host>          # protocol round trip
 pnpm exec tsx tools/roundtrip-image.ts <host> <db>
 pnpm exec tsx tools/verify-hashes.ts <db>        # hashes against a real vault
+pnpm exec tsx tools/i18n-audit.ts                # both catalogues agree, and nothing bypasses `t()`
 ```
 
 ## 4.3 What each check can and cannot see

@@ -7,6 +7,7 @@
 
 import { BlobCache, DEFAULT_BLOB_CACHE_BYTES } from "../../../src/store/blob-cache.js";
 import { NoteQueries, toDataUrl } from "./data.js";
+import { languageFromLocale, setLanguage, t, type Language } from "./i18n.js";
 import type { HttpRelayResult, MainMessage } from "./rpc.js";
 import type { ProgressEvent, RpcRequest, WorkerMessage } from "./rpc.js";
 import {
@@ -22,6 +23,9 @@ import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/
 
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
 const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
+/** This device's language choice. Local, for the same reason the sync interval is: it is a device
+ * preference, not vault data — the vault's own `locale` is the default it overrides. */
+const LANGUAGE_OPTION = "triliumMobile.language";
 /** Trilium's own default for `syncServerTimeout`, which is its polling interval. */
 const DEFAULT_SYNC_INTERVAL_SECONDS = 300;
 
@@ -111,7 +115,7 @@ async function ensureSession(): Promise<SyncTransport> {
 
   const host = store.getOption(OPTION_SYNC_SERVER_HOST);
   const secret = store.getOption(OPTION_DOCUMENT_SECRET);
-  if (!host || !secret) throw new Error("尚未配置服务端");
+  if (!host || !secret) throw new Error(t("setup.noServer"));
 
   const probe = new SyncTransport({
     serverHost: host,
@@ -206,13 +210,13 @@ function ensureInbox(): string {
   // inbox before the first pull has run put a duplicate "速记 Inbox" into the vault on every fresh
   // install, and then the 速记 list showed that empty one instead of the notes.
   if (store.lastSyncedPull === 0) {
-    throw new Error("首次同步尚未完成，稍后再试");
+    throw new Error(t("setup.waitForFirstSync"));
   }
 
   const created = store.createTextNote({
     parentNoteId: ROOT_NOTE_ID,
     title: "速记 Inbox",
-    content: "<p>由 TriliumMobile 自动创建，手机端的速记都会落在这里。</p>"
+    content: t("inbox.body")
   });
 
   store.setOption(OPTION_INBOX_NOTE_ID, created.noteId);
@@ -242,12 +246,7 @@ function explainConnectionFailure(host: string, error: unknown): Error {
   try {
     const target = new URL(host);
     if (target.origin !== self.location.origin) {
-      return new Error(
-        `浏览器无法跨源连接 ${target.origin}：Trilium 返回 Cross-Origin-Resource-Policy: same-origin ` +
-          `且不带 CORS 头，浏览器会直接拒绝，而不是连不上。` +
-          `请用鸿蒙 App（原生转发请求），或把本应用部署到与服务端同源的位置。` +
-          `（原始错误：${message}）`
-      );
+      return new Error(t("error.cors", { origin: target.origin, message }));
     }
   } catch {
     // An unparseable host has already been reported by `normaliseHost`.
@@ -278,7 +277,7 @@ function applyVaultSwitch(documentSecret: string): boolean {
   const previousSecret = store.getOption(OPTION_DOCUMENT_SECRET);
   if (!previousSecret || previousSecret === documentSecret) return false;
 
-  report({ phase: "connecting", message: "检测到不同的知识库，正在清除本地副本…" });
+  report({ phase: "connecting", message: t("setup.differentVault") });
   store.wipeReplica();
   peerInstanceId = null;
   return true;
@@ -300,7 +299,7 @@ async function configureWithSecret(serverHost: string, documentSecret: string): 
   }
 
   if (!status.isInitialized) {
-    throw new Error("该服务端尚未初始化。");
+    throw new Error(t("setup.notInitialised"));
   }
 
   // Prove the secret works before adopting it, so a typo cannot replace a working configuration.
@@ -332,7 +331,7 @@ function ensureLlmChatHome(): string {
   if (existing?.noteId) return existing.noteId;
 
   if (store.lastSyncedPull === 0) {
-    throw new Error("首次同步尚未完成，稍后再试");
+    throw new Error(t("setup.waitForFirstSync"));
   }
 
   return store.createNote({
@@ -363,7 +362,7 @@ async function configure(serverHost: string, password: string): Promise<void> {
     status = await probe.getSetupStatus();
 
     if (!status.isInitialized) {
-      throw new Error("该服务端尚未初始化，请先在浏览器里完成一遍 Trilium 初始化。");
+      throw new Error(t("setup.notInitialisedLong"));
     }
 
     seed = await probe.fetchSyncSeed(password);
@@ -374,7 +373,7 @@ async function configure(serverHost: string, password: string): Promise<void> {
   const documentSecret = seed.options.find((option) => option.name === "documentSecret")?.value;
 
   if (!documentSecret || !documentId) {
-    throw new Error("服务端没有返回 documentId / documentSecret，密码可能不正确。");
+    throw new Error(t("setup.noSecret"));
   }
 
   applyVaultSwitch(documentSecret);
@@ -397,9 +396,9 @@ async function sync(): Promise<{
   const host = store.getOption(OPTION_SYNC_SERVER_HOST);
   const secret = store.getOption(OPTION_DOCUMENT_SECRET);
 
-  if (!host || !secret) throw new Error("尚未配置服务端");
+  if (!host || !secret) throw new Error(t("setup.noServer"));
 
-  report({ phase: "connecting", message: "正在连接服务端…" });
+  report({ phase: "connecting", message: t("setup.connectingServer") });
 
   const transport = new SyncTransport({
     serverHost: host,
@@ -423,20 +422,22 @@ async function sync(): Promise<{
     onProgress: ({ pulled, outstanding }) =>
       report({
         phase: "pulling",
-        message: outstanding > 0 ? `正在拉取…还剩 ${outstanding} 项` : "正在拉取…",
+        // The count has no message of its own: the catalogue's key carries only the verb, so the
+        // number is appended rather than being phrased into a sentence per language.
+        message: outstanding > 0 ? `${t("setup.pulling")} ${outstanding}` : t("setup.pulling"),
         pulled,
         outstanding
       })
   });
 
-  report({ phase: "pushing", message: "正在推送本地改动…" });
+  report({ phase: "pushing", message: t("setup.pushing") });
 
   try {
     const result = await engine.sync();
     peerInstanceId = transport.serverInstanceId;
 
     if (result.divergedSectors.length > 0) {
-      const message = `内容哈希校验未通过：${result.divergedSectors.length} 个分区不一致`;
+      const message = t("error.hashMismatch", { count: result.divergedSectors.length });
       report({ phase: "error", message });
       return {
         ok: false,
@@ -448,7 +449,7 @@ async function sync(): Promise<{
       };
     }
 
-    report({ phase: "done", message: "同步完成" });
+    report({ phase: "done", message: t("sync.complete") });
 
     return {
       ok: true,
@@ -456,7 +457,10 @@ async function sync(): Promise<{
       pushed: result.pushed,
       diverged: 0,
       durationMs: result.durationMs,
-      message: `同步完成：拉取 ${result.pulled} 项，用时 ${(result.durationMs / 1000).toFixed(1)}s`
+      message: t("sync.completeDetail", {
+        pulled: result.pulled,
+        seconds: (result.durationMs / 1000).toFixed(1)
+      })
     };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -471,6 +475,26 @@ function maxBlobContentSize(): number {
 
   const parsed = Number(raw);
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_MAX_BLOB_CONTENT_SIZE;
+}
+
+/**
+ * Which language this worker speaks.
+ *
+ * The device's own choice wins; otherwise the vault's `locale` — a synced option, so it arrives with
+ * the first pull — decides; otherwise Chinese, which is the catalogue's default. Reading it also
+ * applies it: the page asks once at start-up, and the worker's own progress messages have to be in
+ * the same language as the interface showing them.
+ */
+function resolveLanguage(): Language {
+  const override = store.getOption(LANGUAGE_OPTION);
+  if (override === "cn" || override === "en") {
+    setLanguage(override);
+    return override;
+  }
+
+  const language = languageFromLocale(store.getOption("locale"));
+  setLanguage(language);
+  return language;
 }
 
 async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promise<unknown> {
@@ -501,7 +525,7 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       const home = ensureLlmChatHome();
       const created = store.createNote({
         parentNoteId: home,
-        title: `AI 对话 ${new Date().toISOString().slice(0, 16).replace("T", " ")}`,
+        title: t("ai.chatTitle", { stamp: new Date().toISOString().slice(0, 16).replace("T", " ") }),
         type: "llmChat",
         mime: "application/json",
         content: JSON.stringify({ version: 1, messages: [] })
@@ -598,6 +622,16 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     case "setSyncIntervalSeconds":
       store.setOption(SYNC_INTERVAL_OPTION, String(Math.max(0, Math.floor(Number(request.params[0]) || 0))));
       return undefined;
+    case "language":
+      return resolveLanguage();
+    case "setLanguage": {
+      // The override is this device's, so it is stored locally — the vault's `locale` stays what it
+      // was. The worker's own messages follow immediately: they are rendered by the page that asked.
+      const language: Language = request.params[0] === "en" ? "en" : "cn";
+      store.setOption(LANGUAGE_OPTION, language);
+      setLanguage(language);
+      return undefined;
+    }
     case "maxBlobContentSize":
       return maxBlobContentSize();
     case "setMaxBlobContentSize":
@@ -675,7 +709,7 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
 const ready: Promise<void> = boot().catch((error) => {
   post({
     event: "progress",
-    progress: { phase: "error", message: `本地数据库初始化失败：${String(error)}` }
+    progress: { phase: "error", message: t("error.dbInit", { message: String(error) }) }
   });
   throw error;
 });

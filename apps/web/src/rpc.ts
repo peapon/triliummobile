@@ -14,6 +14,7 @@
  */
 
 import type { NoteDetail, NoteSummary } from "./data.js";
+import type { Language } from "./i18n.js";
 
 export interface AppCounts {
   notes: number;
@@ -88,6 +89,13 @@ export interface AppApi {
   /** Unattended sync interval in seconds; 0 disables it. */
   syncIntervalSeconds(): Promise<number>;
   setSyncIntervalSeconds(seconds: number): Promise<void>;
+  /**
+   * The language to show the interface in: this device's override if it has one, otherwise the
+   * vault's own `locale`, otherwise Chinese.
+   */
+  language(): Promise<Language>;
+  /** Persist this device's language override, and apply it to the worker's own messages. */
+  setLanguage(language: Language): Promise<void>;
   setMaxBlobContentSize(value: number): Promise<void>;
   /**
    * Fetch a stubbed note's content on demand. Returns whether anything was downloaded.
@@ -237,6 +245,8 @@ export class WorkerClient implements AppApi {
   maxBlobContentSize = () => this.call("maxBlobContentSize");
   syncIntervalSeconds = () => this.call("syncIntervalSeconds");
   setSyncIntervalSeconds = (seconds: number) => this.call("setSyncIntervalSeconds", seconds);
+  language = () => this.call("language");
+  setLanguage = (language: Language) => this.call("setLanguage", language);
   setMaxBlobContentSize = (value: number) => this.call("setMaxBlobContentSize", value);
   fetchNoteBlob = (noteId: string) => this.call("fetchNoteBlob", noteId);
   listAttachments = (noteId: string) => this.call("listAttachments", noteId);

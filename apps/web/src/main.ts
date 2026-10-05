@@ -11,6 +11,7 @@
  */
 
 import { toSnippet, type NoteDetail, type NoteSummary } from "./data.js";
+import { LANGUAGES, getLanguage, setLanguage, t, type Language } from "./i18n.js";
 import { icon } from "./icons.js";
 import { InkCanvas, createInkDoc, paintInk, parseInkDoc, serializeInkDoc } from "./ink.js";
 import { hasNativeBridge, nativeFetch, reportBackEnabled } from "./native-fetch.js";
@@ -80,16 +81,20 @@ const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
  *
  * `0` stays as "关闭": the manual button is still there, and a client on a metered connection has a
  * legitimate reason to want no unattended traffic at all.
+ *
+ * The entries carry catalogue **keys**, not text: `t()` reads a module-level variable, so a label
+ * resolved here would be frozen at import time, before the language is known. It is resolved where
+ * the option is drawn instead.
  */
-const SYNC_INTERVALS: ReadonlyArray<{ seconds: number; label: string }> = [
-  { seconds: 0, label: "关闭（仅手动）" },
-  { seconds: 60, label: "1 分钟" },
-  { seconds: 300, label: "5 分钟" },
-  { seconds: 900, label: "15 分钟" },
-  { seconds: 1800, label: "30 分钟" },
-  { seconds: 3600, label: "1 小时" },
-  { seconds: 7200, label: "2 小时" },
-  { seconds: 14400, label: "4 小时" }
+const SYNC_INTERVALS: ReadonlyArray<{ seconds: number; labelKey: string }> = [
+  { seconds: 0, labelKey: "interval.off" },
+  { seconds: 60, labelKey: "interval.1m" },
+  { seconds: 300, labelKey: "interval.5m" },
+  { seconds: 900, labelKey: "interval.15m" },
+  { seconds: 1800, labelKey: "interval.30m" },
+  { seconds: 3600, labelKey: "interval.1h" },
+  { seconds: 7200, labelKey: "interval.2h" },
+  { seconds: 14400, labelKey: "interval.4h" }
 ];
 
 /** Snap a stored value to an offered one, so a legacy or hand-edited number cannot fall outside. */
@@ -373,6 +378,11 @@ async function boot(): Promise<void> {
   try {
     await api.ready();
 
+    // Settle the language before the first render that draws words from the catalogue, or that
+    // paint is in the wrong one. Asking the worker also puts *its* messages in the same language:
+    // this device's override wins, the vault's `locale` is the fallback, Chinese the default.
+    setLanguage(await api.language());
+
     // Tell the worker where its network comes from before anything tries to use it.
     const bridged = hasNativeBridge();
     await api.useNativeHttp(bridged);
@@ -395,7 +405,7 @@ async function boot(): Promise<void> {
 
     commit(`
       <div class="setup">
-        <h2>无法打开本地数据库</h2>
+        <h2>${t("boot.dbFailed")}</h2>
         <p>${escapeHtml(String(error))}</p>
       </div>`);
   }
@@ -416,7 +426,7 @@ async function captureForTest(): Promise<void> {
     const created = await api.createTextNote({
       parentNoteId: inbox,
       title: marker,
-      content: `<p>由鸿蒙设备离线创建：${marker}</p>`
+      content: `<p>${t("e2e.captureBody", { marker })}</p>`
     });
 
     console.log(`shell: captured note ${created.noteId} locally`);
@@ -459,7 +469,7 @@ async function selfTestOnDevice(): Promise<void> {
 
     const target = candidates[0]!;
     const before = await api.getNote(target.noteId);
-    const edited = `${before?.content ?? ""}<p>${marker} 已编辑</p>`;
+    const edited = `${before?.content ?? ""}<p>${t("e2e.editBody", { marker })}</p>`;
 
     await api.updateNoteContent(target.noteId, edited);
     console.log(`device: edited ${target.noteId} locally`);
@@ -586,7 +596,7 @@ async function autoConfigureForTest(): Promise<void> {
  */
 function renderBootSkeleton(): void {
   app.innerHTML = `
-    <div class="appbar"><h1>TriliumMobile</h1><span class="status">正在打开本地数据库…</span></div>
+    <div class="appbar"><h1>TriliumMobile</h1><span class="status">${t("boot.openingDb")}</span></div>
     <div class="boot-mark"><img src="/icon-192.png" alt="" width="56" height="56" /></div>
     <div class="view">
       ${Array.from({ length: 5 }, () => `
@@ -781,10 +791,10 @@ function renderAppbar(): string {
     <div class="appbar">
       <span class="appbar-spacer"></span>
       <div class="segmented" role="tablist">
-        ${segment("notes", "速记")}
-        ${segment("library", "知识库")}
+        ${segment("notes", t("app.notes"))}
+        ${segment("library", t("app.library"))}
       </div>
-      <button id="open-sheet" class="icon-only ghost" aria-label="更多">${icon("more", "icon-lg")}</button>
+      <button id="open-sheet" class="icon-only ghost" aria-label="${t("app.more")}">${icon("more", "icon-lg")}</button>
     </div>
     ${renderStatusStrip()}
   `;
@@ -799,11 +809,11 @@ function renderAppbar(): string {
  */
 function renderStatusStrip(): string {
   const label = state.syncing
-    ? state.progress?.message || "同步中…"
+    ? state.progress?.message || t("sync.syncing")
     : state.pending > 0
-      ? `${state.pending} 项待同步`
+      ? t("sync.pending", { count: state.pending })
       : !state.lastOk && state.lastMessage
-        ? "同步失败"
+        ? t("sync.failed")
         : "";
 
   if (!label) return `<div id="status" class="status-strip" hidden></div>`;
@@ -836,17 +846,17 @@ async function renderNotes(): Promise<string> {
   try {
     notes = await api.recentQuickNotes(await api.inboxNoteId(), QUICK_NOTE_LIMIT);
   } catch {
-    return `<div class="empty">首次同步完成后，速记会显示在这里。</div>`;
+    return `<div class="empty">${t("notes.emptyAfterSync")}</div>`;
   }
   const empty = `
     <div class="empty">
-      还没有笔记。<br />点上面的输入框记第一条。
+      ${t("notes.empty")}<br />${t("notes.emptyHint")}
     </div>`;
 
   return `
     <div class="section-head">
-      <span>最近</span>
-      <span class="section-count">${notes.length}${notes.length >= QUICK_NOTE_LIMIT ? "+" : ""} 条</span>
+      <span>${t("notes.recent")}</span>
+      <span class="section-count">${t("notes.count", { count: `${notes.length}${notes.length >= QUICK_NOTE_LIMIT ? "+" : ""}` })}</span>
     </div>
 
     ${notes.length === 0 ? empty : renderNoteCollection(notes, "notes")}
@@ -869,15 +879,15 @@ async function renderLibrary(): Promise<string> {
 
   const empty = `
     <div class="empty">
-      这个目录是空的。<br />在速记里新建一条，或换个目录。
+      ${t("library.empty")}<br />${t("library.emptyHint")}
     </div>`;
 
   return `
-    ${state.libraryPath.length > 0 ? `<div class="crumbs"><span data-crumb="root">知识库</span><span class="sep">/</span>${crumbs}</div>` : ""}
+    ${state.libraryPath.length > 0 ? `<div class="crumbs"><span data-crumb="root">${t("app.library")}</span><span class="sep">/</span>${crumbs}</div>` : ""}
 
     <div class="section-head">
-      <span>${state.libraryPath.length === 0 ? "全部" : escapeHtml(state.libraryTitles[state.libraryTitles.length - 1] ?? "")}</span>
-      <span class="section-count">${children.length} 项</span>
+      <span>${state.libraryPath.length === 0 ? t("app.all") : escapeHtml(state.libraryTitles[state.libraryTitles.length - 1] ?? "")}</span>
+      <span class="section-count">${t("note.childCount", { count: children.length })}</span>
     </div>
 
     ${children.length === 0 ? empty : renderNoteCollection(children, "library")}
@@ -948,7 +958,7 @@ function renderNoteCard(note: NoteSummary, context: "notes" | "library"): string
     <button class="${className}" ${target} data-note-id="${note.noteId}">
       <span class="note-icon"${tint}>${mark}</span>
       <span class="note-text">
-        <span class="title">${escapeHtml(note.title || "无标题")}</span>
+        <span class="title">${escapeHtml(note.title || t("note.untitled"))}</span>
         <span class="meta">${escapeHtml(describeNote(note, descends))}</span>
       </span>
     </button>
@@ -975,10 +985,10 @@ function noteKind(type: string): string {
 
 /** `更新 3月5日` for a note, `N 个子笔记` for a book. */
 function describeNote(note: NoteSummary, descends: boolean): string {
-  if (descends) return `${note.childCount} 项`;
+  if (descends) return t("note.childCount", { count: note.childCount });
 
   const date = note.utcDateModified?.slice(0, 10).replace(/-/g, "/") ?? "";
-  return date ? `更新 ${date}` : note.type;
+  return date ? t("time.updated", { date }) : note.type;
 }
 
 
@@ -995,8 +1005,8 @@ function describeNote(note: NoteSummary, descends: boolean): string {
 function renderFabCluster(): string {
   return `
     <div class="fab-cluster">
-      <button id="open-search" class="fab" aria-label="搜索">${icon("search", "icon-lg")}</button>
-      <button id="open-editor" class="fab fab-primary" aria-label="新建速记">${icon("plus", "icon-lg")}</button>
+      <button id="open-search" class="fab" aria-label="${t("app.search")}">${icon("search", "icon-lg")}</button>
+      <button id="open-editor" class="fab fab-primary" aria-label="${t("editor.new")}">${icon("plus", "icon-lg")}</button>
     </div>
   `;
 }
@@ -1020,21 +1030,21 @@ function renderDialog(): string {
   const body =
     dialog.kind === "rename"
       ? `<input id="dialog-input" value="${escapeAttr(dialog.value)}" autocomplete="off" />`
-      : `<p class="dialog-text">「${escapeHtml(dialog.title || "这条笔记")}」及其全部子笔记都会被删除，并同步到其他设备。</p>`;
+      : `<p class="dialog-text">${t("note.deleteBody", { title: escapeHtml(dialog.title || t("note.this")) })}</p>`;
 
-  const confirmLabel = dialog.kind === "rename" ? "重命名" : "删除";
+  const confirmLabel = dialog.kind === "rename" ? t("note.rename") : t("note.delete");
 
   return `
     <div class="sheet-backdrop" id="dialog-backdrop">
       <div class="sheet" role="dialog" aria-label="${confirmLabel}">
         <div class="sheet-group">
-          <div class="sheet-label">${dialog.kind === "rename" ? "重命名" : "删除笔记"}</div>
+          <div class="sheet-label">${dialog.kind === "rename" ? t("note.rename") : t("note.deleteTitle")}</div>
           ${body}
         </div>
         <button class="sheet-action danger" id="dialog-confirm">
           ${icon(dialog.kind === "rename" ? "check" : "trash")}<span>${confirmLabel}</span>
         </button>
-        <button class="sheet-cancel" id="dialog-cancel">取消</button>
+        <button class="sheet-cancel" id="dialog-cancel">${t("common.cancel")}</button>
       </div>
     </div>
   `;
@@ -1058,37 +1068,37 @@ function renderSheet(): string {
 
   return `
     <div class="sheet-backdrop" id="sheet-backdrop">
-      <div class="sheet" role="dialog" aria-label="显示选项">
+      <div class="sheet" role="dialog" aria-label="${t("app.showOptions")}">
         <div class="sheet-group">
-          <div class="sheet-label">布局</div>
+          <div class="sheet-label">${t("sheet.layout")}</div>
           <div class="segmented">
-            ${choice("layout", "list", "列表")}
-            ${choice("layout", "grid", "网格")}
+            ${choice("layout", "list", t("layout.list"))}
+            ${choice("layout", "grid", t("layout.grid"))}
           </div>
         </div>
 
         <div class="sheet-group">
-          <div class="sheet-label">排序方式</div>
+          <div class="sheet-label">${t("sheet.sort")}</div>
           <div class="segmented">
-            ${choice("sort", "position", "服务器顺序")}
-            ${choice("sort", "modified", "更新时间")}
-            ${choice("sort", "created", "创建时间")}
-            ${choice("sort", "title", "标题")}
+            ${choice("sort", "position", t("sort.server"))}
+            ${choice("sort", "modified", t("sort.modified"))}
+            ${choice("sort", "created", t("sort.created"))}
+            ${choice("sort", "title", t("sort.title"))}
           </div>
         </div>
 
         <div class="sheet-group">
           <button class="sheet-action" id="sheet-sync" ${state.syncing ? "disabled" : ""}>
-            ${icon("sync")}<span>立即同步</span>
-            ${state.pending > 0 ? `<span class="sheet-value">${state.pending} 项待同步</span>` : ""}
+            ${icon("sync")}<span>${t("sheet.syncNow")}</span>
+            ${state.pending > 0 ? `<span class="sheet-value">${t("sync.pending", { count: state.pending })}</span>` : ""}
           </button>
           <button class="sheet-action" id="sheet-settings">
-            ${icon("settings")}<span>设置</span>
-            <span class="sheet-value">${escapeHtml(state.serverHost ?? "未配置")}</span>
+            ${icon("settings")}<span>${t("app.settings")}</span>
+            <span class="sheet-value">${escapeHtml(state.serverHost ?? t("setup.notConfigured"))}</span>
           </button>
         </div>
 
-        <button class="sheet-cancel" id="sheet-cancel">取消</button>
+        <button class="sheet-cancel" id="sheet-cancel">${t("common.cancel")}</button>
       </div>
     </div>
   `;
@@ -1107,18 +1117,18 @@ function renderEditor(): string {
   return `
     <div class="screen" id="editor-screen">
       <div class="appbar">
-        <button id="editor-cancel" class="icon-only ghost" aria-label="放弃">${icon("close", "icon-lg")}</button>
-        <span class="screen-title">新建速记</span>
-        <button id="editor-image" class="ghost">${icon("image")} 图片</button>
-        <button id="editor-file" class="ghost">${icon("paperclip")} 附件</button>
-        <button id="editor-save" class="primary" ${state.busy ? "disabled" : ""}>完成</button>
+        <button id="editor-cancel" class="icon-only ghost" aria-label="${t("editor.cancel")}">${icon("close", "icon-lg")}</button>
+        <span class="screen-title">${t("editor.new")}</span>
+        <button id="editor-image" class="ghost">${icon("image")} ${t("editor.image")}</button>
+        <button id="editor-file" class="ghost">${icon("paperclip")} ${t("editor.attachment")}</button>
+        <button id="editor-save" class="primary" ${state.busy ? "disabled" : ""}>${t("editor.save")}</button>
       </div>
 
       <div class="view">
-        <input id="editor-title" placeholder="标题（可留空）" value="${escapeAttr(state.editorTitle)}" autocomplete="off" />
-        <textarea id="editor-body" placeholder="记你想记…" autofocus>${escapeHtml(state.editorBody)}</textarea>
+        <input id="editor-title" placeholder="${t("editor.titlePlaceholder")}" value="${escapeAttr(state.editorTitle)}" autocomplete="off" />
+        <textarea id="editor-body" placeholder="${t("editor.bodyPlaceholder")}" autofocus>${escapeHtml(state.editorBody)}</textarea>
         ${state.editorAttachments > 0
-          ? `<div class="pending-images">${state.editorAttachments} 个文件将插入正文</div>`
+          ? `<div class="pending-images">${t("editor.pendingAttachments", { count: state.editorAttachments })}</div>`
           : ""}
       </div>
     </div>
@@ -1140,10 +1150,10 @@ function renderSearchScreen(): string {
       <div class="appbar search-bar">
         <div class="search-field">
           ${icon("search")}
-          <input id="search-input" type="search" placeholder="搜索标题与正文…"
+          <input id="search-input" type="search" placeholder="${t("search.placeholder")}"
                  value="${escapeAttr(state.searchQuery)}" autocomplete="off" autocorrect="off" spellcheck="false" />
         </div>
-        <button id="search-cancel" class="ghost">取消</button>
+        <button id="search-cancel" class="ghost">${t("common.cancel")}</button>
       </div>
       <div class="view" id="search-results"></div>
     </div>
@@ -1162,7 +1172,7 @@ async function startAiChat(): Promise<void> {
   try {
     const created = await api.createLlmChat();
     await refreshChrome();
-    showToast("已新建对话，等待同步", false);
+    showToast(t("ai.created"), false);
 
     state.aiOpen = false;
     state.openNoteId = created.noteId;
@@ -1193,9 +1203,8 @@ async function renderAiScreen(): Promise<string> {
   const body =
     chats.length === 0
       ? `<div class="empty">
-           这台设备的副本里还没有 AI 对话。<br /><br />
-           Trilium 的 AI 对话需要服务端配置好模型提供方；<br />
-           配置后已有的对话会随同步出现在这里。
+           ${t("ai.empty")}<br /><br />
+           ${t("ai.emptyHint")}
          </div>`
       : `<div class="list">${chats
           .map(
@@ -1203,7 +1212,7 @@ async function renderAiScreen(): Promise<string> {
         <button class="row" data-open="${chat.noteId}" data-note-id="${chat.noteId}">
           <span class="note-icon">${icon("ai")}</span>
           <span class="note-text">
-            <span class="title">${escapeHtml(chat.title || "无标题对话")}</span>
+            <span class="title">${escapeHtml(chat.title || t("ai.untitledChat"))}</span>
             <span class="meta">${escapeHtml(describeNote(chat, false))}</span>
           </span>
         </button>`
@@ -1213,16 +1222,16 @@ async function renderAiScreen(): Promise<string> {
   return `
     <div class="screen" id="ai-screen">
       <div class="appbar">
-        <button id="ai-back" class="icon-only ghost" aria-label="返回">${icon("back", "icon-lg")}</button>
-        <span class="screen-title">AI 笔记</span>
+        <button id="ai-back" class="icon-only ghost" aria-label="${t("app.back")}">${icon("back", "icon-lg")}</button>
+        <span class="screen-title">${t("ai.title")}</span>
         <span class="appbar-spacer"></span>
       </div>
       <div class="view">
         <div class="section-head">
-          <span>对话</span>
-          <span class="section-count">${chats.length} 个</span>
+          <span>${t("ai.chats")}</span>
+          <span class="section-count">${t("ai.chatCount", { count: chats.length })}</span>
         </div>
-        <button id="ai-new" class="attachment-add">${icon("plus")} 新建对话</button>
+        <button id="ai-new" class="attachment-add">${icon("plus")} ${t("ai.newChat")}</button>
         ${body}
       </div>
     </div>
@@ -1250,8 +1259,8 @@ async function renderDetail(noteId: string): Promise<string> {
   // so, and offering the download, is the difference between "empty note" and "not fetched yet".
   const stubbed = note.contentStubbed
     ? `<div class="banner">
-         <span>正文超过同步上限，尚未下载到本机。</span>
-         <button id="fetch-note-blob">下载正文</button>
+         <span>${t("note.contentStubbed")}</span>
+         <button id="fetch-note-blob">${t("note.downloadContent")}</button>
        </div>`
     : "";
 
@@ -1266,8 +1275,8 @@ async function renderDetail(noteId: string): Promise<string> {
                <span class="attachment-meta">${escapeHtml(attachment.mime || attachment.role)}</span>
                ${
                  attachment.stubbed
-                   ? `<button data-fetch-attachment="${attachment.attachmentId}">${icon("download")} 下载</button>`
-                   : `<span class="attachment-meta">已缓存</span>`
+                   ? `<button data-fetch-attachment="${attachment.attachmentId}">${icon("download")} ${t("attachment.download")}</button>`
+                   : `<span class="attachment-meta">${t("attachment.cached")}</span>`
                }
              </div>`
              )
@@ -1279,7 +1288,7 @@ async function renderDetail(noteId: string): Promise<string> {
   const attachmentBar = `
     <div class="attachments">
       <button id="add-attachment" class="attachment-add">
-        ${icon("plus")} 添加附件
+        ${icon("plus")} ${t("note.addAttachment")}
       </button>
     </div>`;
 
@@ -1311,10 +1320,10 @@ async function renderDetail(noteId: string): Promise<string> {
   return `
     <div class="detail" data-mode="${state.detailMode}" data-note-type="${escapeAttr(note.type)}">
       <div class="appbar">
-        <button id="detail-back" class="ghost">${icon("back")} 返回</button>
-        <h1>${escapeHtml(note.title || "(无标题)")}</h1>
-        <button id="note-rename" class="icon-only ghost" aria-label="重命名">${icon("write", "icon-lg")}</button>
-        <button id="note-delete" class="icon-only ghost" aria-label="删除">${icon("trash", "icon-lg")}</button>
+        <button id="detail-back" class="ghost">${icon("back")} ${t("app.back")}</button>
+        <h1>${escapeHtml(note.title || t("note.untitledLower"))}</h1>
+        <button id="note-rename" class="icon-only ghost" aria-label="${t("note.rename")}">${icon("write", "icon-lg")}</button>
+        <button id="note-delete" class="icon-only ghost" aria-label="${t("note.delete")}">${icon("trash", "icon-lg")}</button>
       </div>
       ${toolbar}
       <div class="${bodyClass}" id="detail-body">
@@ -1327,7 +1336,7 @@ async function renderDetail(noteId: string): Promise<string> {
       ${attachmentBar}
       ${
         undownloaded > 0 && state.detailMode !== "ink"
-          ? `<div class="cache-note">本机还有 ${undownloaded} 项内容未下载</div>`
+          ? `<div class="cache-note">${t("note.cacheNote", { count: undownloaded })}</div>`
           : ""
       }
     </div>
@@ -1336,31 +1345,31 @@ async function renderDetail(noteId: string): Promise<string> {
 
 function renderDetailToolbar(note: NoteDetail): string {
   const active = (mode: DetailMode) => (state.detailMode === mode ? " active" : "");
-  const inkLabel = state.inkDirty ? "笔迹 •" : "笔迹";
+  const inkLabel = state.inkDirty ? t("ink.labelDirty") : t("ink.label");
 
   if (state.detailMode === "edit") {
     return `<div class="detail-toolbar">
-      <button id="mode-save" class="primary">保存</button>
-      <button id="mode-cancel">取消</button>
+      <button id="mode-save" class="primary">${t("common.save")}</button>
+      <button id="mode-cancel">${t("common.cancel")}</button>
     </div>`;
   }
 
   return `<div class="detail-toolbar">
-    <button id="mode-edit" class="${active("edit").trim()}">编辑</button>
+    <button id="mode-edit" class="${active("edit").trim()}">${t("note.edit")}</button>
     <button id="mode-ink" class="${active("ink").trim()}">${inkLabel}</button>
   </div>`;
 }
 
 function renderInkToolbar(): string {
   return `<div class="ink-toolbar">
-    <span class="ink-hint" id="ink-hint">用笔或手指书写</span>
-    <button data-ink-color="#e8eaed" class="swatch" style="--swatch:#e8eaed" aria-label="白色"></button>
-    <button data-ink-color="#ff6b6b" class="swatch" style="--swatch:#ff6b6b" aria-label="红色"></button>
-    <button data-ink-color="#3ddc84" class="swatch" style="--swatch:#3ddc84" aria-label="绿色"></button>
-    <button data-ink-color="#6ea8fe" class="swatch" style="--swatch:#6ea8fe" aria-label="蓝色"></button>
-    <button id="ink-undo">撤销</button>
-    <button id="ink-clear">清空</button>
-    <button id="ink-save" class="primary" ${state.inkDirty ? "" : "disabled"}>保存笔迹</button>
+    <span class="ink-hint" id="ink-hint">${t("ink.hint")}</span>
+    <button data-ink-color="#e8eaed" class="swatch" style="--swatch:#e8eaed" aria-label="${t("ink.white")}"></button>
+    <button data-ink-color="#ff6b6b" class="swatch" style="--swatch:#ff6b6b" aria-label="${t("ink.red")}"></button>
+    <button data-ink-color="#3ddc84" class="swatch" style="--swatch:#3ddc84" aria-label="${t("ink.green")}"></button>
+    <button data-ink-color="#6ea8fe" class="swatch" style="--swatch:#6ea8fe" aria-label="${t("ink.blue")}"></button>
+    <button id="ink-undo">${t("ink.undo")}</button>
+    <button id="ink-clear">${t("ink.clear")}</button>
+    <button id="ink-save" class="primary" ${state.inkDirty ? "" : "disabled"}>${t("ink.save")}</button>
   </div>`;
 }
 
@@ -1370,22 +1379,22 @@ function renderInkToolbar(): string {
  * this document has a JS bridge attached.
  */
 async function renderContent(note: NoteDetail): Promise<string> {
-  if (note.content === "") return `<div class="empty">（空笔记）</div>`;
+  if (note.content === "") return `<div class="empty">${t("note.emptyContent")}</div>`;
 
   if (note.type === "code") return `<pre>${escapeHtml(note.content)}</pre>`;
 
   if (note.type === "image") {
     if (note.dataUrl) return `<img class="note-image" src="${note.dataUrl}" alt="${escapeAttr(note.title)}" />`;
-    return `<div class="empty">图片还在服务端，点上面的「下载正文」取回。</div>`;
+    return `<div class="empty">${t("note.imageRemote")}</div>`;
   }
 
   if (note.type === "file") {
     if (note.dataUrl) {
       return `<a class="note-file" href="${note.dataUrl}" download="${escapeAttr(note.title)}">
-        ${icon("file")} 下载 ${escapeHtml(note.title)}
+        ${icon("file")} ${t("note.downloadFile", { title: escapeHtml(note.title) })}
       </a>`;
     }
-    return `<div class="empty">附件笔记（${escapeHtml(note.mime)}）——需先下载。</div>`;
+    return `<div class="empty">${t("note.attachmentRemote", { mime: escapeHtml(note.mime) })}</div>`;
   }
 
   return rewriteAttachmentUrls(sanitizeHtml(note.content));
@@ -1685,7 +1694,7 @@ async function saveFromEditor(): Promise<void> {
   const body = state.editorBody;
 
   if (!title && !body.trim()) {
-    showToast("什么都没写", true);
+    showToast(t("editor.empty"), true);
     return;
   }
 
@@ -1750,7 +1759,7 @@ async function saveFromEditor(): Promise<void> {
     history.back();
 
     await refreshChrome();
-    showToast("已保存，等待同步", false);
+    showToast(t("editor.saved"), false);
     await render();
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), true);
@@ -1865,14 +1874,14 @@ async function confirmDialog(): Promise<void> {
     if (title !== "" && title !== dialog.title) {
       await api.renameNote(dialog.noteId, title);
       await refreshChrome();
-      showToast("已重命名，等待同步", false);
+      showToast(t("note.renamed"), false);
     }
   } else {
     await api.deleteNote(dialog.noteId);
     state.openNoteId = null;
     state.detailMode = "view";
     await refreshChrome();
-    showToast("已删除，等待同步", false);
+    showToast(t("note.deleted"), false);
   }
 
   // Closing is left to `stepBack`, which clears the dialog and re-renders. Clearing it here first
@@ -1890,7 +1899,7 @@ async function confirmDialog(): Promise<void> {
 async function openAttachment(attachmentId: string): Promise<void> {
   const dataUrl = await api.attachmentDataUrl(attachmentId);
   if (!dataUrl) {
-    showToast("这个附件还没有下载到本机", true);
+    showToast(t("attachment.notLocal"), true);
     return;
   }
 
@@ -1921,7 +1930,7 @@ async function addAttachmentToOpenNote(): Promise<void> {
     }
 
     await refreshChrome();
-    showToast(files.length === 1 ? `已附加 ${files[0]!.name}` : `已附加 ${files.length} 个文件`, false);
+    showToast(files.length === 1 ? t("note.attachedOne", { name: files[0]!.name }) : t("note.attachedMany", { count: files.length }), false);
     await render();
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), true);
@@ -1969,7 +1978,7 @@ async function renderSearchResults(): Promise<void> {
   const results = await api.search(query, 60);
 
   if (results.length === 0) {
-    container.innerHTML = `<div class="empty">没有匹配的笔记。<br />搜索在本地进行，标题和正文都会命中。</div>`;
+    container.innerHTML = `<div class="empty">${t("search.empty")}<br />${t("search.emptyHint")}</div>`;
     return;
   }
 
@@ -2043,7 +2052,7 @@ async function wireDetail(noteId: string): Promise<void> {
     // can never introduce a script that the read path would then have to strip.
     await api.updateNoteContent(noteId, editor.innerHTML);
     state.detailMode = "view";
-    showToast("已保存", false);
+    showToast(t("common.saved"), false);
     // Refresh first: the status bar must say the change is owed to the server straight away, not
     // only after the next unrelated action refreshes it.
     await refreshChrome();
@@ -2055,14 +2064,14 @@ async function wireDetail(noteId: string): Promise<void> {
   document.getElementById("fetch-note-blob")?.addEventListener("click", async (event) => {
     const button = event.currentTarget as HTMLButtonElement;
     button.disabled = true;
-    button.textContent = "下载中…";
+    button.textContent = t("attachment.downloading");
 
     const result = await api.fetchNoteBlob(noteId);
 
     if (result.fetched) {
-      showToast(`已下载 ${(result.bytes / 1024).toFixed(0)} KB`, false);
+      showToast(t("attachment.downloadedKb", { kb: (result.bytes / 1024).toFixed(0) }), false);
     } else {
-      showToast(result.error ?? "下载失败", true);
+      showToast(result.error ?? t("attachment.downloadFailed"), true);
     }
 
     await render();
@@ -2073,13 +2082,13 @@ async function wireDetail(noteId: string): Promise<void> {
       const attachmentId = button.dataset.fetchAttachment;
       if (!attachmentId) return;
 
-      button.textContent = "下载中…";
+      button.textContent = t("attachment.downloading");
       const result = await api.fetchAttachmentBlob(attachmentId);
 
       if (result.fetched) {
-        showToast(`已下载 ${(result.bytes / 1024).toFixed(0)} KB`, false);
+        showToast(t("attachment.downloadedKb", { kb: (result.bytes / 1024).toFixed(0) }), false);
       } else {
-        showToast(result.error ?? "下载失败", true);
+        showToast(result.error ?? t("attachment.downloadFailed"), true);
       }
 
       await render();
@@ -2115,7 +2124,7 @@ async function wireDetail(noteId: string): Promise<void> {
     await api.saveInk(noteId, serializeInkDoc(inkCanvas.document));
     state.inkDirty = false;
     state.hasInk = true;
-    showToast("笔迹已保存，将随笔记同步", false);
+    showToast(t("ink.saved"), false);
     await refreshChrome();
     await render();
   });
@@ -2136,8 +2145,8 @@ function updateInkHint(): void {
   if (!hint || !inkCanvas) return;
 
   hint.textContent = inkCanvas.sawPen
-    ? "已识别到手写笔"
-    : "用笔或手指书写";
+    ? t("ink.penDetected")
+    : t("ink.hint");
 }
 
 // ------------------------------------------------------------------- actions
@@ -2151,7 +2160,7 @@ function updateInkHint(): void {
  */
 async function runSync(announce = false): Promise<void> {
   state.syncing = true;
-  state.lastMessage = "连接中…";
+  state.lastMessage = t("setup.connecting");
   await render();
 
   try {
@@ -2160,8 +2169,8 @@ async function runSync(announce = false): Promise<void> {
     state.lastMessage = outcome.message;
 
     // The bar only shows "同步失败"; the sentence that explains it arrives as a toast.
-    if (!outcome.ok) showToast(outcome.message || "同步失败", true);
-    else if (announce) showToast(outcome.message || "已同步", false);
+    if (!outcome.ok) showToast(outcome.message || t("sync.failed"), true);
+    else if (announce) showToast(outcome.message || t("sync.done"), false);
   } catch (error) {
     state.lastOk = false;
     state.lastMessage = error instanceof Error ? error.message : String(error);
@@ -2185,33 +2194,23 @@ async function renderSetup(error?: string): Promise<void> {
   commit(`
     <div class="setup">
       <img class="brand-mark" src="/icon-192.png" alt="" width="72" height="72" />
-      <h2>连接 Trilium 服务端</h2>
-      <p>
-        填入你自建服务端的地址与密码。密码只用于读取同步密钥，之后同步走的是
-        documentSecret 的 HMAC，不会再发送密码。
-      </p>
+      <h2>${t("setup.title")}</h2>
+      <p>${t("setup.intro")}</p>
       ${error ? `<div class="banner bad">${escapeHtml(error)}</div>` : ""}
       <div class="field">
-        <label for="server">服务端地址</label>
+        <label for="server">${t("setup.serverLabel")}</label>
         <input id="server" type="url" inputmode="url" autocapitalize="off" autocorrect="off"
                spellcheck="false" placeholder="http://192.168.1.10:8080" value="${escapeAttr(host)}" />
       </div>
       <div class="field">
-        <label for="password">密码</label>
+        <label for="password">${t("setup.passwordLabel")}</label>
         <input id="password" type="password" autocomplete="current-password" />
       </div>
       <button class="primary" id="connect" ${state.busy ? "disabled" : ""}>
-        ${state.busy ? "连接中…" : "连接并首次同步"}
+        ${state.busy ? t("setup.connecting") : t("setup.connect")}
       </button>
-      <p>
-        首次同步会拉取整个笔记树。二进制附件超过 4 MiB 的部分不会下载，点开时再按需获取。
-      </p>
-      <p class="note">
-        ⚠️ 地址必须与当前页面<b>同源</b>。Trilium 服务端返回
-        <code>Cross-Origin-Resource-Policy: same-origin</code> 且不带 CORS 头，浏览器会直接拒绝
-        跨源读取。开发时由 Vite 代理 <code>/api</code> 转发到真实服务端；正式环境请把本应用
-        部署在服务端同源之下（或由原生外壳代为转发请求）。
-      </p>
+      <p>${t("setup.firstSync")}</p>
+      <p class="note">${t("setup.originWarning")}</p>
     </div>
   `);
 
@@ -2220,7 +2219,7 @@ async function renderSetup(error?: string): Promise<void> {
     const password = (document.getElementById("password") as HTMLInputElement).value;
 
     if (!serverHost || !password) {
-      await renderSetup("请填写服务端地址和密码");
+      await renderSetup(t("setup.prompt"));
       return;
     }
 
@@ -2249,44 +2248,64 @@ async function renderSettings(): Promise<void> {
 
   commit(`
     <div class="appbar">
-      <button id="settings-back" class="ghost">${icon("back")} 返回</button>
-      <h1>设置</h1>
+      <button id="settings-back" class="ghost">${icon("back")} ${t("app.back")}</button>
+      <h1>${t("app.settings")}</h1>
     </div>
     <div class="view">
       <div class="banner">
-        服务端：${escapeHtml(vault.serverHost || "(未配置)")}<br />
-        知识库 ID：<code>${escapeHtml(vault.documentId ?? "(未绑定)")}</code><br />
-        本地：${counts.notes.toLocaleString("en-US")} 条笔记 ·
-        ${counts.branches.toLocaleString("en-US")} 个分支 ·
-        ${counts.attributes.toLocaleString("en-US")} 个属性 ·
-        ${counts.blobs.toLocaleString("en-US")} 个内容块
+        ${t("settings.server", { host: escapeHtml(vault.serverHost || t("setup.notConfiguredParen")) })}<br />
+        ${t("settings.vaultId")}<code>${escapeHtml(vault.documentId ?? t("setup.notSetParen"))}</code><br />
+        ${t("settings.localCounts", {
+          notes: counts.notes.toLocaleString("en-US"),
+          branches: counts.branches.toLocaleString("en-US"),
+          attributes: counts.attributes.toLocaleString("en-US"),
+          blobs: counts.blobs.toLocaleString("en-US")
+        })}
       </div>
       <div class="banner">
-        换到<b>另一个知识库</b>时本地副本会自动清除——两个库的实体混在一起是无法复原的。
-        下面的按钮只在你想手动清空时用。
+        ${t("settings.vaultSwitch")}
       </div>
       <div class="field">
-        <label for="sync-interval">自动同步间隔</label>
-        <select id="sync-interval">
-          ${SYNC_INTERVALS.map(
+        <label for="language">${t("settings.language")}</label>
+        <select id="language">
+          ${LANGUAGES.map(
             (entry) =>
-              `<option value="${entry.seconds}" ${entry.seconds === state.syncIntervalSeconds ? "selected" : ""}>${entry.label}</option>`
+              `<option value="${entry.code}" ${entry.code === getLanguage() ? "selected" : ""}>${escapeHtml(entry.label)}</option>`
           ).join("")}
         </select>
       </div>
 
       <div class="field">
-        <label for="blob-cap">附件同步上限（字节，0 = 不限制）</label>
+        <label for="sync-interval">${t("settings.syncInterval")}</label>
+        <select id="sync-interval">
+          ${SYNC_INTERVALS.map(
+            (entry) =>
+              `<option value="${entry.seconds}" ${entry.seconds === state.syncIntervalSeconds ? "selected" : ""}>${t(entry.labelKey)}</option>`
+          ).join("")}
+        </select>
+      </div>
+
+      <div class="field">
+        <label for="blob-cap">${t("settings.blobCap")}</label>
         <input id="blob-cap" type="number" inputmode="numeric" value="${cap}" />
       </div>
-      <button id="save-settings" class="primary">保存</button>
-      <button id="open-ai" style="margin-top:10px">AI 对话</button>
-      <button id="reconfigure" style="margin-top:10px">重新配置服务端</button>
-      <button id="clear-data" class="danger">清除本地数据（保留连接设置）</button>
+      <button id="save-settings" class="primary">${t("common.save")}</button>
+      <button id="open-ai" style="margin-top:10px">${t("ai.open")}</button>
+      <button id="reconfigure" style="margin-top:10px">${t("settings.reconfigure")}</button>
+      <button id="clear-data" class="danger">${t("settings.clearData")}</button>
     </div>
   `);
 
   document.getElementById("settings-back")?.addEventListener("click", () => history.back());
+
+  // The choice is this device's, so the worker stores it locally — the vault's own `locale` is only
+  // the default it overrides. Applied before the re-render, so the new language is what is redrawn.
+  document.getElementById("language")?.addEventListener("change", async (event) => {
+    const language = (event.currentTarget as HTMLSelectElement).value as Language;
+    await api.setLanguage(language);
+    setLanguage(language);
+    await renderSettings();
+  });
 
   document.getElementById("save-settings")?.addEventListener("click", async () => {
     const value = Number((document.getElementById("blob-cap") as HTMLInputElement).value);
@@ -2301,7 +2320,7 @@ async function renderSettings(): Promise<void> {
       applySyncInterval();
     }
 
-    showToast("已保存", false);
+    showToast(t("common.saved"), false);
     await render();
   });
 
@@ -2316,7 +2335,7 @@ async function renderSettings(): Promise<void> {
   document.getElementById("clear-data")?.addEventListener("click", async () => {
     await api.clearLocalData();
     await refreshChrome();
-    showToast("本地副本已清除，下次同步会重新拉取", false);
+    showToast(t("setup.cleared"), false);
     await render();
   });
 }
@@ -2355,10 +2374,10 @@ function formatDate(utc: string): string {
   const then = Date.UTC(Number(year), Number(month) - 1, Number(day), Number(hour), Number(minute));
   const deltaMinutes = (Date.now() - then) / 60000;
 
-  if (deltaMinutes < 1) return "刚刚";
-  if (deltaMinutes < 60) return `${Math.floor(deltaMinutes)} 分钟前`;
-  if (deltaMinutes < 60 * 24) return `${Math.floor(deltaMinutes / 60)} 小时前`;
-  if (deltaMinutes < 60 * 24 * 7) return `${Math.floor(deltaMinutes / (60 * 24))} 天前`;
+  if (deltaMinutes < 1) return t("time.justNow");
+  if (deltaMinutes < 60) return t("time.minutesAgo", { count: Math.floor(deltaMinutes) });
+  if (deltaMinutes < 60 * 24) return t("time.hoursAgo", { count: Math.floor(deltaMinutes / 60) });
+  if (deltaMinutes < 60 * 24 * 7) return t("time.daysAgo", { count: Math.floor(deltaMinutes / (60 * 24)) });
 
   return `${year}-${month}-${day}`;
 }
