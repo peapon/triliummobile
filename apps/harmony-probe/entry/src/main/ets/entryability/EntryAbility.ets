@@ -47,15 +47,8 @@ export default class EntryAbility extends UIAbility {
    * which is what a user expects.
    */
   onBackPressed(): boolean {
-    // Ask the page, not the WebView. The page knows whether a dialog, a note or a folder is open;
-    // the WebView only knows about document navigations, and this app has none.
-    hilog.info(DOMAIN, TAG, "onBackPressed: backEnabled=%{public}s", String(ShellState.backEnabled));
-
-    if (ShellState.backEnabled && ShellState.controller) {
-      ShellState.controller.runJavaScript("window.__triliumBack && window.__triliumBack()");
-      return true;
-    }
-
-    return false;
+    // Kept for the system back button, which does arrive at the ability. The edge swipe does not —
+    // it is handled by the page's `onBackPress`. Both ask the same question.
+    return ShellState.handleBack();
   }
 }

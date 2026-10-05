@@ -20,4 +20,20 @@ export class ShellState {
    * system exited the app instead of stepping back.
    */
   static backEnabled: boolean = false;
+
+  /**
+   * Consume a back gesture, or decline it.
+   *
+   * Shared, because two things can ask: the page's `onBackPress` and the ability's `onBackPressed`.
+   * Measured on the device, the edge swipe reaches the **page**, not the ability — the ability's
+   * callback never logged once while the page reported `backEnabled=true`.
+   */
+  static handleBack(): boolean {
+    if (!ShellState.backEnabled || !ShellState.controller) {
+      return false;
+    }
+
+    ShellState.controller.runJavaScript("window.__triliumBack && window.__triliumBack()");
+    return true;
+  }
 }

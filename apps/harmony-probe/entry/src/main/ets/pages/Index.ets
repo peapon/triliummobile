@@ -159,6 +159,19 @@ struct Index {
       });
   }
 
+  /**
+   * The back gesture lands here, not on the ability.
+   *
+   * ArkUI calls this on the `@Entry` component for a system back or an edge swipe. Returning true
+   * consumes it, so the gesture steps back through the app instead of leaving it.
+   */
+  onBackPress(): boolean {
+    const handled = ShellState.handleBack();
+    hilog.info(DOMAIN, TAG, "page onBackPress: backEnabled=%{public}s handled=%{public}s",
+      String(ShellState.backEnabled), String(handled));
+    return handled;
+  }
+
   private serveFromPackage(url: string): WebResourceResponse | null {
     if (!url.startsWith(APP_ORIGIN)) {
       return null;
