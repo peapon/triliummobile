@@ -1585,6 +1585,17 @@ function wire(): void {
     history.back();
   });
 
+  // Tapping a reference in the text opens the attachment. Trilium's own client resolves the fragment
+  // itself, and this one has to do the same — the href is not a URL to fetch.
+  document.querySelectorAll<HTMLAnchorElement>(".detail .body a[href*='attachmentId=']").forEach((link) => {
+    link.addEventListener("click", (event) => {
+      event.preventDefault();
+
+      const id = new URL(`https://x/${link.getAttribute("href") ?? ""}`).searchParams.get("attachmentId");
+      if (id) void openAttachment(id);
+    });
+  });
+
   document.getElementById("add-attachment")?.addEventListener("click", () => {
     void addAttachmentToOpenNote();
   });
@@ -1703,19 +1714,25 @@ async function saveFromEditor(): Promise<void> {
           bytes: await readBytes(file)
         });
 
-        // Only a picture goes into the text. Trilium's own attach-file flow inserts nothing at all —
-        // `copyAttachmentReference` merely copies a link to the clipboard — and an attachment shows
-        // in the attachment panel. Writing a link into the body was a deviation, and a harmful one:
-        // a stored relative URL can be absolutised by another client against an empty base, which is
-        // how `https://api/attachments/<id>/download` ended up *inside* a note and broken everywhere.
-        //
-        // The picture form is kept because it works, and because a picture inside the note is what a
-        // picture is for. It also uses `/image/`, which is the endpoint that accepts an image.
+        // A picture is inlined. Its `src` is a relative `api/attachments/…` URL, which is what
+        // Trilium's own notes contain, and it works: images have always displayed.
         if (mime.startsWith("image/")) {
           references.push(
             `<p><img src="api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}"></p>`
           );
+          continue;
         }
+
+        // Everything else becomes a visible reference, in Trilium's own form: a *fragment* link
+        // carrying the attachment id.
+        //
+        // The fragment is the fix, not a style choice. A stored relative URL such as
+        // `api/attachments/<id>/download` can be absolutised by another client against an empty base
+        // and becomes `https://api/attachments/…` *inside the note* — which is how the previous link
+        // came to be broken on every client. A fragment cannot be absolutised into anything else.
+        references.push(
+          `<p><a class="reference-link" href="#root/${created.noteId}?viewMode=attachments&attachmentId=${attached.attachmentId}">${escapeHtml(file.name)}</a></p>`
+        );
       }
 
       await api.updateNoteContent(
@@ -1862,6 +1879,27 @@ async function confirmDialog(): Promise<void> {
   // would leave `stepBack` looking at the next thing down the stack — the open note — and close that
   // instead, which is how a rename used to dismiss the note.
   history.back();
+}
+
+/**
+ * Open an attachment by handing its bytes to the platform.
+ *
+ * A `data:` URL with `download` set is the only route a WebView offers without a native share target.
+ * The bytes are already in the replica when the attachment is cached, so this needs no round trip.
+ */
+async function openAttachment(attachmentId: string): Promise<void> {
+  const dataUrl = await api.attachmentDataUrl(attachmentId);
+  if (!dataUrl) {
+    showToast("这个附件还没有下载到本机", true);
+    return;
+  }
+
+  const link = document.createElement("a");
+  link.href = dataUrl;
+  link.download = "";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
 }
 
 /** Attach a file to the note that is open. */

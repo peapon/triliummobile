@@ -69,6 +69,26 @@ const MEASURE_SOURCE = String.raw`
     })
     .filter(function (t) { return t.h > 0 && t.h < 44; });
 
+  // A label drawn on more than one line. Range.getClientRects() returns one rect per line box, so
+  // this is the difference between "图片" and "图" over "片" — which is what a squeezed button does.
+  const wrapped = Array.from(document.querySelectorAll("button, .segmented button"))
+    .filter(function (el) {
+      const s = getComputedStyle(el);
+      if (s.display === "none" || s.visibility === "hidden") return false;
+      // Only pure-text buttons. A row is a button containing a title and a meta line, so it is
+      // multi-line by design; flagging those buried the real cases under a hundred false ones.
+      if (el.children.length > 0) return false;
+      const text = (el.textContent || "").trim();
+      if (text === "") return false;
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      return range.getClientRects().length > 1;
+    })
+    .slice(0, 8)
+    .map(function (el) {
+      return { el: describe(el), text: (el.textContent || "").trim().slice(0, 14) };
+    });
+
   const clipped = Array.from(document.querySelectorAll("*"))
     .filter(function (el) {
       const s = getComputedStyle(el);
@@ -145,6 +165,7 @@ const MEASURE_SOURCE = String.raw`
     docOverflow: document.documentElement.scrollWidth > viewport.w + 1,
     docScrollWidth: document.documentElement.scrollWidth,
     smallTargets: smallTargets,
+    wrapped: wrapped,
     clipped: clipped,
     overflowing: overflowing,
     chrome: chrome,
@@ -162,6 +183,7 @@ interface Measurement {
   docOverflow: boolean;
   docScrollWidth: number;
   smallTargets: Array<{ el: string; w: number; h: number }>;
+  wrapped: Array<{ el: string; text: string }>;
   clipped: Array<{ el: string; text: string; scrollWidth: number; clientWidth: number }>;
   overflowing: Array<{ el: string; left: number; right: number }>;
   chrome: Array<{ el: string; h: number; text: string }>;
@@ -189,6 +211,15 @@ async function audit(page: Page, screen: string, form: string): Promise<void> {
       form,
       kind: "escapes viewport",
       detail: `${t.el} spans ${t.left}..${t.right} (viewport 0..${m.viewport.w})`
+    });
+  }
+
+  for (const w of m.wrapped) {
+    findings.push({
+      screen,
+      form,
+      kind: "label wraps to two lines",
+      detail: `${w.el} "${w.text}"`
     });
   }
 
