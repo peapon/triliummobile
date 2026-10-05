@@ -40,6 +40,15 @@ export DEVECO_SDK_HOME="$DEVECO_SDK"
 
 # ------------------------------------------------------------------ web build
 
+# A build is made from the working tree, which is usually ahead of HEAD — the commit that captures
+# it does not exist yet. Naming the build after HEAD alone therefore names the *previous* commit,
+# and reading that off a device says the deploy failed when it did not. Say so instead.
+if [ -n "${BUILD_ID:-}" ]; then
+  if [ -n "$(git -C "$REPO_ROOT" status --porcelain 2>/dev/null)" ]; then
+    export BUILD_ID="${BUILD_ID}+uncommitted"
+  fi
+fi
+
 if [ "${1:-}" = "--e2e" ]; then
   SERVER="${2:?usage: package-app.sh --e2e <server> <password> [capture-title]}"
   PASSWORD="${3:?password required}"
