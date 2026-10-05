@@ -75,6 +75,10 @@ export interface AppApi {
   inboxNoteId(): Promise<string>;
   /** Replace a note's HTML — the tablet's light-editing path. */
   updateNoteContent(noteId: string, content: string): Promise<void>;
+  /** Change a note's title. An ordinary edit, so it syncs like any other. */
+  renameNote(noteId: string, title: string): Promise<void>;
+  /** Delete a note and its subtree. Soft, the way Trilium deletes. */
+  deleteNote(noteId: string): Promise<void>;
   /** Read a note's ink layer, creating the attachment on first save. */
   loadInk(noteId: string): Promise<{ attachmentId: string | null; doc: string | null }>;
   saveInk(noteId: string, doc: string): Promise<{ attachmentId: string }>;
@@ -223,6 +227,8 @@ export class WorkerClient implements AppApi {
 
   inboxNoteId = () => this.call("inboxNoteId");
   updateNoteContent = (noteId: string, content: string) => this.call("updateNoteContent", noteId, content);
+  renameNote = (noteId: string, title: string) => this.call("renameNote", noteId, title);
+  deleteNote = (noteId: string) => this.call("deleteNote", noteId);
   loadInk = (noteId: string) => this.call("loadInk", noteId);
   saveInk = (noteId: string, doc: string) => this.call("saveInk", noteId, doc);
   maxBlobContentSize = () => this.call("maxBlobContentSize");

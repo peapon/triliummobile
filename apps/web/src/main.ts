@@ -1175,6 +1175,8 @@ async function renderDetail(noteId: string): Promise<string> {
       <div class="appbar">
         <button id="detail-back" class="ghost">${icon("back")} 返回</button>
         <h1>${escapeHtml(note.title || "(无标题)")}</h1>
+        <button id="note-rename" class="icon-only ghost" aria-label="重命名">${icon("write", "icon-lg")}</button>
+        <button id="note-delete" class="icon-only ghost" aria-label="删除">${icon("trash", "icon-lg")}</button>
       </div>
       ${toolbar}
       <div class="${bodyClass}" id="detail-body">
@@ -1405,6 +1407,14 @@ function wire(): void {
     if (state.searchQuery) void renderSearchResults();
   }
 
+  document.getElementById("note-rename")?.addEventListener("click", () => {
+    void renameOpenNote();
+  });
+
+  document.getElementById("note-delete")?.addEventListener("click", () => {
+    void deleteOpenNote();
+  });
+
   document.getElementById("detail-back")?.addEventListener("click", () => {
     // Go through history so the hardware back button and this button share one stack.
     history.back();
@@ -1565,6 +1575,53 @@ function captureEditorDraft(): void {
 
   if (title) state.editorTitle = title.value;
   if (body) state.editorBody = body.value;
+}
+
+/**
+ * Rename the open note.
+ *
+ * `prompt` rather than an inline field: it is one line of text, the WebView renders it natively, and
+ * an inline editor in a view that re-renders from state would need the draft-preserving dance the
+ * capture editor already needed once.
+ */
+async function renameOpenNote(): Promise<void> {
+  const noteId = state.openNoteId;
+  if (!noteId) return;
+
+  const note = await api.getNote(noteId);
+  const next = window.prompt("重命名", note?.title ?? "");
+  if (next === null) return;
+
+  const title = next.trim();
+  if (title === "" || title === note?.title) return;
+
+  await api.renameNote(noteId, title);
+  await refreshChrome();
+  showToast("已重命名，等待同步", false);
+  await render();
+}
+
+/**
+ * Delete the open note.
+ *
+ * Confirmed, because the note and everything under it go, and the deletion then travels to every
+ * other device on the next sync.
+ */
+async function deleteOpenNote(): Promise<void> {
+  const noteId = state.openNoteId;
+  if (!noteId) return;
+
+  const note = await api.getNote(noteId);
+  const label = note?.title || "这条笔记";
+  if (!window.confirm(`删除「${label}」及其全部子笔记？`)) return;
+
+  await api.deleteNote(noteId);
+  state.openNoteId = null;
+  state.detailMode = "view";
+
+  await refreshChrome();
+  showToast("已删除，等待同步", false);
+  await render();
 }
 
 /** Attach a file to the note that is open. */

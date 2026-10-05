@@ -502,6 +502,12 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return store.createTextNote(request.params[0]);
     case "inboxNoteId":
       return ensureInbox();
+    case "renameNote":
+      store.renameNote(request.params[0], request.params[1]);
+      return undefined;
+    case "deleteNote":
+      store.deleteNote(request.params[0]);
+      return undefined;
     case "updateNoteContent":
       store.updateNoteContent(request.params[0], request.params[1]);
       return undefined;

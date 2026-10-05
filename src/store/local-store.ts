@@ -798,6 +798,81 @@ export class LocalStore {
     return (row?.maxPosition ?? 0) + 10;
   }
 
+  /**
+   * Rename a note.
+   *
+   * A title change is an ordinary entity update, so it syncs like any other edit and needs no special
+   * handling on the server.
+   */
+  renameNote(noteId: string, title: string, now: Date = new Date()): void {
+    const utc = utcNowDateTime(now);
+    const local = localDateTime(now);
+
+    this.db.transaction(() => {
+      this.db.run("UPDATE notes SET title = ?, dateModified = ?, utcDateModified = ? WHERE noteId = ?", [
+        title,
+        local,
+        utc,
+        noteId
+      ]);
+
+      const row = this.db.get<Record<string, unknown>>("SELECT * FROM notes WHERE noteId = ?", [noteId]);
+      if (row) this.recordLocalChange("notes", noteId, row, utc);
+    });
+  }
+
+  /**
+   * Delete a note and everything under it.
+   *
+   * Trilium deletes softly: `isDeleted` goes to 1 and every row in the cascade shares one `deleteId`,
+   * which is how a peer knows the whole cascade is one act rather than several. The rows stay until
+   * the erasure window passes, which is also what lets the deletion sync at all — a hard `DELETE`
+   * would leave nothing for the journal to carry.
+   */
+  deleteNote(noteId: string, now: Date = new Date()): void {
+    const utc = utcNowDateTime(now);
+    const deleteId = randomString(12);
+
+    // The note and its whole subtree, so deleting a book does not orphan its children.
+    const doomed: string[] = [];
+    const walk = (id: string): void => {
+      if (doomed.includes(id)) return;
+      doomed.push(id);
+      for (const row of this.db.all<{ noteId: string }>(
+        "SELECT noteId FROM branches WHERE parentNoteId = ? AND isDeleted = 0",
+        [id]
+      )) {
+        walk(row.noteId);
+      }
+    };
+    walk(noteId);
+
+    this.db.transaction(() => {
+      for (const id of doomed) {
+        this.db.run("UPDATE notes SET isDeleted = 1, deleteId = ?, utcDateModified = ? WHERE noteId = ?", [
+          deleteId,
+          utc,
+          id
+        ]);
+        this.db.run(
+          "UPDATE branches SET isDeleted = 1, deleteId = ?, utcDateModified = ? WHERE noteId = ? OR parentNoteId = ?",
+          [deleteId, utc, id, id]
+        );
+
+        const noteRow = this.db.get<Record<string, unknown>>("SELECT * FROM notes WHERE noteId = ?", [id]);
+        if (noteRow) this.recordLocalChange("notes", id, noteRow, utc);
+
+        for (const branch of this.db.all<Record<string, unknown>>(
+          "SELECT * FROM branches WHERE noteId = ? OR parentNoteId = ?",
+          [id, id]
+        )) {
+          const branchId = String(branch.branchId);
+          this.recordLocalChange("branches", branchId, branch, utc);
+        }
+      }
+    });
+  }
+
   /** Positions are spaced by 10 upstream, so a note can always be slotted between two others. */
   private nextNotePosition(parentNoteId: string): number {
     const row = this.db.get<{ maxPosition: number | null }>(
