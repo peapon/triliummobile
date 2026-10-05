@@ -30,8 +30,13 @@ type Tab = "notes" | "library";
 /** The same children rendered two ways, switched from the options sheet. */
 type LayoutMode = "list" | "grid";
 
-/** Sort keys Trilium already has; nothing new is offered. */
-type SortKey = "modified" | "created" | "title";
+/**
+ * Sort keys.
+ *
+ * `position` is the default and is not a sort at all — it keeps `branches.notePosition`, which is the
+ * order the note has in the tree on the server. Re-sorting by anything else silently overrode it.
+ */
+type SortKey = "position" | "modified" | "created" | "title";
 
 /** Bottom sheets, the reference's pattern for options and for creating. */
 type Sheet = "none" | "view";
@@ -112,7 +117,7 @@ const state: AppState = {
   hasInk: false,
   settingsOpen: false,
   layout: "list",
-  sort: "modified",
+  sort: "position",
   sheet: "none",
   libraryPath: [],
   libraryTitles: [],
@@ -740,10 +745,12 @@ function sortNotes(notes: NoteSummary[]): NoteSummary[] {
   const sorted = [...notes];
 
   switch (state.sort) {
+    case "position":
+      // The query already ordered by `branches.notePosition`; re-sorting is exactly what broke the
+      // tree order matching the server's.
+      return sorted;
     case "created":
-      // `utcDateCreated` is not on the summary, so fall back to id order, which Trilium assigns
-      // monotonically. Honest about what the data supports rather than faking a date.
-      sorted.sort((a, b) => (a.noteId < b.noteId ? 1 : -1));
+      sorted.sort((a, b) => (a.utcDateCreated < b.utcDateCreated ? 1 : -1));
       return sorted;
     case "title":
       sorted.sort((a, b) => a.title.localeCompare(b.title, "zh-Hans-CN"));
@@ -881,9 +888,10 @@ function renderSheet(): string {
         <div class="sheet-group">
           <div class="sheet-label">排序方式</div>
           <div class="segmented">
-            ${choice("sort", "modified", "按更新时间")}
-            ${choice("sort", "created", "按创建时间")}
-            ${choice("sort", "title", "按标题")}
+            ${choice("sort", "position", "服务器顺序")}
+            ${choice("sort", "modified", "更新时间")}
+            ${choice("sort", "created", "创建时间")}
+            ${choice("sort", "title", "标题")}
           </div>
         </div>
 
