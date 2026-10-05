@@ -19,7 +19,7 @@ The architecture is recorded in [docs/adr/0001-architecture.md](docs/adr/0001-ar
 | Phone UI (capture / search / browse) | **Working** — editing is entered by long press |
 | Pad UI (light editing + ink annotation/drawing) | **Working** — edit and ink both reach the server |
 | Attachments | **Working** — on demand, with an LRU cache; pictures inline, files as references |
-| Languages | **Chinese and English**, switchable in settings; follows the vault's `locale` by default |
+| Languages | **Nine**, switchable in settings; follows the vault's `locale` by default |
 | Rename / delete notes | **Working and verified against the server's own database** |
 | Automatic sync | **Working** — off, or 1 minute to 4 hours |
 | HarmonyOS app (`.hap`) | **Running and syncing both ways on a real device** |

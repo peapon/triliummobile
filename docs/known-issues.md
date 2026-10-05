@@ -14,7 +14,7 @@ ones deliberately: they are part of the status, not a footnote.
 | K5 | **Handwriting recognition is deferred** | Ink only, no text | By decision, not omission |
 | K6 | **The WebView version on the HarmonyOS-4.x tablet is unknown** | Below Chromium 102, OPFS is unavailable and the app cannot run | To check on the device |
 | K7 | **Two languages ship: Chinese and English.** Trilium ships forty | Speakers of the other thirty-eight get English | Deliberate |
-| K8 | **The packaged app is not exercised by the browser suites** | Browser checks pass against a dev server, not the `.hap` or `.apk` | Closed only by device logs |
+| K8 | **Nine languages ship of Trilium's forty** | The other thirty-one get English | See below |
 
 ### K1: iOS/iPadOS
 
