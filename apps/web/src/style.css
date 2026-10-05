@@ -15,24 +15,38 @@
  * earlier version read as flat. `tools/check-contrast.mjs` re-runs the measurements.
  */
 
+/*
+ * Trilium's own palette, not one of mine.
+ *
+ * Values are lifted from the app's own themes — `apps/client/src/stylesheets/theme-next-light.css`
+ * and `theme-next-dark.css` — and mapped onto this client's token names. The mapping is recorded in
+ * docs/research/06-trilium-palette.md.
+ *
+ * The dark theme is the point of doing this: it is `#242424`, a dark grey, where this client had
+ * `#1f1f1f`, which is very nearly black. Trilium's own answer to "what does dark look like" is not
+ * a black screen.
+ *
+ * Contrast: Trilium's themes are not tuned to WCAG, so a few values are nudged and every nudge is
+ * listed in the mapping document. `tools/check-contrast.mjs` is the gate.
+ */
 :root {
-  /* ---------------------------------------------------------------- palette */
-  /* Warm charcoal rather than the blue-grey default: it reads as paper and ink. */
-  --bg: #121110;
-  --surface: #1b1a18;
-  --surface-2: #252321;
-  --surface-3: #302d2a;
-  --border: #3e3b36;
-  --border-strong: #4a463f;
-  --text: #ece9e4;
-  --muted: #a09890;
-  --faint: #8d867d;
-  --accent: #e0a458;
-  --accent-ink: #121110;
-  --danger: #e88a7d;
-  --ok: #88c98a;
-  --warn: #e0a458;
+  /* ------------------------------------------------------------- Trilium: dark */
+  --bg: #1f1f1f;              /* --left-pane-background-color / --root-background */
+  --surface: #242424;         /* --main-background-color */
+  --surface-2: #2e2e2e;       /* a step of its own; Trilium has no exact third level */
+  --surface-3: #383838;
+  --border: #454545;          /* --main-border-color */
+  --border-strong: #5a5a5a;
+  --text: #cccccc;            /* --main-text-color */
+  --muted: #bbbbbb;           /* --muted-text-color */
+  --faint: #a0a0a0;           /* lightened from Trilium's own; see the mapping doc */
+  --accent: #95c3d9;          /* --link-color */
+  --accent-ink: #1f1f1f;
+  --danger: #d58477;          /* --dropdown-item-icon-destructive-color */
+  --ok: #74d369;              /* --log-status-success-color */
+  --warn: #ffbb7f;            /* --log-slow-color */
 
+  /* ---------------------------------------------------------------- palette */
   /* ------------------------------------------------------------------ type */
   /* Six steps. The previous version had nine hardcoded sizes, including both 16 and 16.5. */
   --text-xs: 11px;   /* meta, chips */
@@ -89,22 +103,21 @@
 
 @media (prefers-color-scheme: light) {
   :root {
-    /* Warm paper. `danger` and `ok` are their own values here — reusing the dark ones is what left
-       the earlier light theme at 2.78:1 and 1.78:1, both unreadable. */
-    --bg: #faf8f5;
-    --surface: #ffffff;
-    --surface-2: #f3efea;
-    --surface-3: #e9e3dc;
-    --border: #d0c7bc;
-    --border-strong: #bdb2a4;
-    --text: #1b1917;
-    --muted: #6b645d;
-    --faint: #756e67;
-    --accent: #9a5f1e;
+    /* ---------------------------------------------------------- Trilium: light */
+    --bg: #f2f2f2;            /* --left-pane-background-color / --root-background */
+    --surface: #ffffff;       /* --main-background-color */
+    --surface-2: #f5f5f5;     /* --accented-background-color */
+    --surface-3: #e8e8e8;
+    --border: #c6c6c6;        /* --main-border-color, darkened: #dbdbdb is 1.38:1 on a card */
+    --border-strong: #bdbdbd;
+    --text: #000000;          /* --main-text-color */
+    --muted: #666666;         /* --muted-text-color */
+    --faint: #6b6b6b;         /* darkened from Trilium's own; see the mapping doc */
+    --accent: #0075ae;        /* --link-color, one unit darker to clear 4.5:1 on the page */
     --accent-ink: #ffffff;
-    --danger: #a62d22;
-    --ok: #2f6b34;
-    --warn: #8a5a12;
+    --danger: #db3b22;        /* --dropdown-item-icon-destructive-color, darkened from #de4027 */
+    --ok: #26881b;            /* --log-status-success-color, darkened: #32b323 is 2.76:1 */
+    --warn: #a96721;          /* --log-slow-color, darkened: #db9345 is 2.54:1 */
 
     --elev-1: 0 1px 2px rgb(31 26 20 / 8%), 0 1px 1px rgb(31 26 20 / 5%);
     --elev-2: 0 4px 14px rgb(31 26 20 / 10%), 0 1px 3px rgb(31 26 20 / 7%);
@@ -432,60 +445,65 @@ textarea:focus {
   color: var(--accent);
 }
 
-/* --------------------------------------------------------- home action row */
+/* -------------------------------------------------------- floating actions */
 
 /*
- * The three entries the reference puts on its home screen: search, a new quick note, and AI. The
- * middle one carries the weight, because capturing is what the phone is for.
+ * Pinned bottom-right, over the content.
+ *
+ * The reference's `+` and `AI` sit at y≈0.86 with list content below them, so they float rather
+ * than take a row — and a floating cluster stays reachable from either tab, under the thumb, which
+ * is where a phone wants its primary action.
  */
-.home-actions {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: var(--space-2);
-}
-
-.home-action {
+.fab-cluster {
+  position: fixed;
+  right: max(var(--space-4), var(--safe-right));
+  bottom: calc(var(--safe-bottom) + var(--space-4));
+  z-index: 30;
   display: flex;
-  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: var(--space-2);
-  min-height: 88px;
-  padding: var(--space-3) var(--space-2);
-  background: var(--surface);
-  border-radius: var(--radius-md);
-  font-size: var(--text-xs);
-  font-weight: 560;
-  color: var(--muted);
-  box-shadow: var(--elev-1);
+  gap: var(--space-3);
+  animation: panel-in var(--dur-3) var(--ease-out);
 }
 
-.home-action .home-action-icon {
+.fab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 34px;
-  height: 34px;
+  width: var(--tap);
+  height: var(--tap);
+  min-height: var(--tap);
+  padding: 0;
   border-radius: var(--radius-pill);
   background: var(--surface-2);
-  color: var(--accent);
+  color: var(--muted);
+  box-shadow: var(--elev-2);
+  transition:
+    transform var(--dur-1) var(--ease-out),
+    background var(--dur-1) var(--ease-out);
 }
 
-/* Only one of the three is the primary act, so only one is filled. */
-.home-action.primary-action {
+.fab:active {
+  transform: scale(0.92);
+}
+
+/* Only one of the three is the primary act, so only one is filled and larger. */
+.fab-primary {
+  width: 56px;
+  height: 56px;
+  min-height: 56px;
   background: var(--accent);
   color: var(--accent-ink);
 }
 
-.home-action.primary-action .home-action-icon {
-  background: rgb(0 0 0 / 14%);
-  color: inherit;
+.fab-primary .icon {
+  width: 24px;
+  height: 24px;
+  stroke-width: 2;
 }
 
-/* Balances the centred segmented control against the trailing overflow button. */
-.appbar-spacer {
-  flex: 0 0 var(--tap);
-  width: var(--tap);
+/* Leave room so the last row is not hidden behind the cluster. */
+.view {
+  padding-bottom: calc(var(--tap) * 2 + var(--space-6));
 }
 
 /* ----------------------------------------------------------- section head */
@@ -1188,7 +1206,11 @@ p.note code {
 
 @media (min-width: 720px) {
   .view {
-    padding: var(--space-5) max(var(--space-5), calc((100% - 860px) / 2));
+    /* The bottom value must be repeated: the shorthand resets it, and without it the floating
+       cluster covers the last row on a tablet. Measured at 1024x768, last row y=748 vs cluster
+       y=696. */
+    padding: var(--space-5) max(var(--space-5), calc((100% - 860px) / 2))
+      calc(var(--tap) * 2 + var(--space-6));
   }
 
   .quick-note textarea {

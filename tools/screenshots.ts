@@ -64,7 +64,7 @@ async function capture(page: Page, scheme: "dark" | "light"): Promise<void> {
 
   // 速记 — the quick-note surface.
   await page.click('[data-tab="notes"]');
-  await page.waitForSelector(".home-actions");
+  await page.waitForSelector(".fab-cluster");
   await shoot(page, `${scheme}-1-notes`);
 
   // The full-screen editor, which is where a note is actually written.

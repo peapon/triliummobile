@@ -548,6 +548,7 @@ async function render(): Promise<void> {
     ${renderAppbar()}
     <div class="view" id="view">${view}</div>
     ${detail}
+    ${renderFabCluster()}
     ${renderSheet()}
     ${renderEditor()}
     ${renderSearchScreen()}
@@ -661,23 +662,6 @@ async function renderNotes(): Promise<string> {
     </div>`;
 
   return `
-    <div class="home-actions">
-      <button id="open-search" class="home-action">
-        <span class="home-action-icon">${icon("search", "icon-lg")}</span>
-        <span>搜索</span>
-      </button>
-
-      <button id="open-editor" class="home-action primary-action">
-        <span class="home-action-icon">${icon("plus", "icon-lg")}</span>
-        <span>新建速记</span>
-      </button>
-
-      <button id="open-ai" class="home-action">
-        <span class="home-action-icon">${icon("ai", "icon-lg")}</span>
-        <span>AI 笔记</span>
-      </button>
-    </div>
-
     <div class="section-head">
       <span>最近</span>
       <span class="section-count">${counts.notes.toLocaleString("en-US")} 条</span>
@@ -802,6 +786,26 @@ function describeNote(note: NoteSummary, descends: boolean): string {
   return date ? `更新 ${date}` : note.type;
 }
 
+
+/**
+ * The three entries, floating over the content at the bottom.
+ *
+ * They were a three-across row at the top of the home screen, which was a misreading of the
+ * reference: its `+` and `AI` sit at y≈0.86 with list content *below* them, so they float over the
+ * list rather than occupying a row of it. Floating also keeps them reachable from either tab and
+ * puts them under the thumb, which is where a phone wants its primary action.
+ *
+ * The middle one is filled because capturing is what the phone is for.
+ */
+function renderFabCluster(): string {
+  return `
+    <div class="fab-cluster">
+      <button id="open-search" class="fab" aria-label="搜索">${icon("search", "icon-lg")}</button>
+      <button id="open-editor" class="fab fab-primary" aria-label="新建速记">${icon("plus", "icon-lg")}</button>
+      <button id="open-ai" class="fab" aria-label="AI 笔记">${icon("ai", "icon-lg")}</button>
+    </div>
+  `;
+}
 
 /**
  * The options sheet.

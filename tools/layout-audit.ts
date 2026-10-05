@@ -120,6 +120,21 @@ const MEASURE_SOURCE = String.raw`
     ? { el: describe(scrollable), content: scrollable.scrollHeight, visible: scrollable.clientHeight }
     : null;
 
+  // Floating buttons risk hiding the end of the list, so record both boxes.
+  const cluster = document.querySelector(".fab-cluster");
+  const clusterBox = cluster
+    ? (function () {
+        const r = cluster.getBoundingClientRect();
+        return { top: Math.round(r.top), bottom: Math.round(r.bottom) };
+      })()
+    : null;
+
+  const candidates = document.querySelectorAll(".row, .card");
+  const lastRow = candidates[candidates.length - 1];
+  const lastRowBottom = lastRow
+    ? Math.round(lastRow.getBoundingClientRect().bottom)
+    : null;
+
   const input = document.querySelector(".quick-note textarea");
   const primary = input
     ? { w: Math.round(input.getBoundingClientRect().width), h: Math.round(input.getBoundingClientRect().height) }
@@ -134,7 +149,9 @@ const MEASURE_SOURCE = String.raw`
     overflowing: overflowing,
     chrome: chrome,
     scroll: scroll,
-    primary: primary
+    primary: primary,
+    clusterBox: clusterBox,
+    lastRowBottom: lastRowBottom
   };
 })()
 `;
@@ -150,6 +167,8 @@ interface Measurement {
   chrome: Array<{ el: string; h: number; text: string }>;
   scroll: { el: string; content: number; visible: number } | null;
   primary: { w: number; h: number } | null;
+  clusterBox: { top: number; bottom: number } | null;
+  lastRowBottom: number | null;
 }
 
 async function audit(page: Page, screen: string, form: string): Promise<void> {
@@ -189,6 +208,27 @@ async function audit(page: Page, screen: string, form: string): Promise<void> {
       kind: "tap target < 44px",
       detail: `${t.el} is ${t.w}x${t.h}`
     });
+  }
+
+  if (m.clusterBox && m.scroll && m.scroll.content > m.scroll.visible) {
+    // Scroll to the end: a floating cluster may cover content on the way down, but the last row must
+    // be able to clear it or the list can never be fully read.
+    await page.evaluate(() => {
+      const el = document.querySelector(".view, .detail .body") as HTMLElement | null;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    await page.waitForTimeout(200);
+
+    const end = (await page.evaluate(`(${MEASURE_SOURCE})`)) as Measurement;
+
+    if (end.lastRowBottom !== null && end.clusterBox !== null && end.lastRowBottom > end.clusterBox.top) {
+      findings.push({
+        screen,
+        form,
+        kind: "floating buttons cover the last row",
+        detail: `last row ends at y=${end.lastRowBottom}, the cluster starts at y=${end.clusterBox.top}`
+      });
+    }
   }
 
   const chromeTotal = m.chrome.reduce((sum: number, c: { h: number }) => sum + c.h, 0);
@@ -266,7 +306,7 @@ async function main(): Promise<void> {
         name: "home",
         open: async () => {
           await page.click('[data-tab="notes"]');
-          await page.waitForSelector(".home-actions");
+          await page.waitForSelector(".fab-cluster");
         }
       },
       {

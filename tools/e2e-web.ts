@@ -87,7 +87,7 @@ async function dismissOverlays(page: Page): Promise<void> {
 async function goHome(page: Page): Promise<void> {
   await dismissOverlays(page);
   await page.click('[data-tab="notes"]');
-  await page.waitForSelector(".home-actions");
+  await page.waitForSelector(".fab-cluster");
 }
 
 async function goLibrary(page: Page): Promise<void> {
