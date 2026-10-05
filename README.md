@@ -13,16 +13,34 @@ This README is the operator's view: what exists, how to run it, and what has act
 | Entity hashes | **Done and verified** — 100% on a fresh server DB; 100% of notes/branches/attributes in a live 2.6 GB vault |
 | Sync transport (login, pull, paged push, check) | **Done and verified** — **404/404 sectors match the owner's live vault** |
 | Local replica (schema, journal, conflict bounce-back, tombstones) | **Done and verified** — full round-trip against a real server |
-| Offline capture (`createTextNote`) | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
+| Offline capture | **Done and verified** — notes created offline reach the server and a fresh client reproduces them |
 | Content-hash verification loop | **Done** — folds the journal sector by sector, with re-queue retry |
-| **Phone UI (capture / search / browse)** | **Working and browser-verified** — 20 E2E checks against a real server |
-| **Pad UI (light editing + ink annotation/drawing)** | **Working and browser-verified** — edit and ink both reach the server |
-| On-demand blob fetch + LRU (large attachments) | **Not started** — blobs are stubbed above the cap, never fetched back |
-| ArkTS shell packaging the web core as a `.hap` | **Not started** — toolchain ready |
-| HarmonyOS build toolchain | **Working, no Huawei account needed** — builds an unsigned `.hap` |
-| HarmonyOS runtime behaviour | **Measured on a real API 26 emulator** — see [docs/harmonyos-verified.md](docs/harmonyos-verified.md) |
-| **HarmonyOS app (web core in an ArkTS shell)** | **Running and syncing both ways on the emulator** |
+| Phone UI (capture / search / browse) | **Working** — editing is entered by long press |
+| Pad UI (light editing + ink annotation/drawing) | **Working** — edit and ink both reach the server |
+| Attachments | **Working** — on demand, with an LRU cache; pictures inline, files as references |
+| Rename / delete notes | **Working and verified against the server's own database** |
+| Automatic sync | **Working** — off, or 1 minute to 4 hours |
+| HarmonyOS app (`.hap`) | **Running and syncing both ways on a real device** |
+| Android app (`.apk`) | **Builds; the package is verified; not yet run on a device** |
+| iOS / iPadOS | **Not built** — see [docs/06-known-issues.md](docs/06-known-issues.md#k1-iosipados) |
 | Stylus `pointerType === "pen"` | **Still unproven** — needs a physical device with a stylus |
+| Sending an AI message | **Not possible** — a chat can be created; the server owns the model |
+
+## Documentation
+
+Organised by phase in [docs/](docs/README.md):
+
+| Phase | Document |
+|---|---|
+| Requirements | [docs/01-requirements.md](docs/01-requirements.md) |
+| Design | [docs/02-design.md](docs/02-design.md) · [docs/adr/](docs/adr/) · [docs/research/](docs/research/) |
+| Implementation | [docs/03-implementation.md](docs/03-implementation.md) |
+| Verification | [docs/04-verification.md](docs/04-verification.md) |
+| Release | [docs/05-release.md](docs/05-release.md) |
+| Known issues | [docs/06-known-issues.md](docs/06-known-issues.md) |
+
+Read the known issues before trusting anything. They are written in the same voice as the
+results, and the unverified items are listed beside the verified ones on purpose.
 
 ## What the round-trip proves
 
@@ -82,6 +100,26 @@ cd apps/harmony-probe
 
 No Huawei account is needed to build or to install on the emulator. Deploying to a physical device
 does need one — see [docs/harmonyos-verified.md](docs/harmonyos-verified.md).
+
+## Building the Android app
+
+The same web bundle in a WebView shell. `WebViewAssetLoader` serves it from
+`https://appassets.androidplatform.net`, which is a secure context — the app keeps its whole
+database in a Worker's OPFS and neither `file://` nor a custom scheme provides one.
+
+```bash
+cd apps/android && ./build-apk.sh     # → app/build/outputs/apk/debug/app-debug.apk
+```
+
+Installs on a device with no cable:
+
+```
+Settings → Security → Allow installation from unknown sources, then open the APK
+```
+
+The Android SDK is at `/opt/homebrew/share/android-commandlinetools`. The machine has only
+JDK 25, which Gradle 8.11 refuses; **Gradle 9.5.1 with AGP 9.1.1** builds against it, so no
+JDK install is needed.
 
 ## Building the capability probe
 
