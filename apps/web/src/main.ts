@@ -292,6 +292,9 @@ async function boot(): Promise<void> {
     console.log(`shell: configured=${state.configured}`);
 
     await render();
+    // The build's identity, logged where the shell can read it. Verifying that a device is running
+    // the build just made should not depend on squinting at the screen.
+    console.log(`shell: build ${__BUILD_ID__}`);
     console.log("shell: rendered");
 
     await autoConfigureForTest();
@@ -875,6 +878,7 @@ function renderEditor(): string {
       <div class="appbar">
         <button id="editor-cancel" class="icon-only ghost" aria-label="放弃">${icon("close", "icon-lg")}</button>
         <span class="screen-title">新建速记</span>
+        <button id="editor-image" class="ghost">${icon("image")} 图片</button>
         <button id="editor-save" class="primary">完成</button>
       </div>
 
@@ -1012,6 +1016,14 @@ async function renderDetail(noteId: string): Promise<string> {
          </div>`
       : "";
 
+  // Always offered, not only when there is already something attached: the first file needs a way in.
+  const attachmentBar = `
+    <div class="attachments">
+      <button id="add-attachment" class="attachment-add">
+        ${icon("plus")} 添加附件
+      </button>
+    </div>`;
+
   const renderable = note.type === "text" || note.type === "code";
 
   // Editing is intentionally only offered for the note types this client can round-trip safely.
@@ -1046,6 +1058,7 @@ async function renderDetail(noteId: string): Promise<string> {
       ${state.detailMode === "ink" ? renderInkToolbar() : ""}
       ${labels ? `<div class="label-chips">${labels}</div>` : ""}
       ${attachmentList}
+      ${attachmentBar}
       ${
         undownloaded > 0 && state.detailMode !== "ink"
           ? `<div class="cache-note">本机还有 ${undownloaded} 项内容未下载</div>`
@@ -1096,11 +1109,17 @@ function renderContent(note: NoteDetail): string {
   if (note.type === "code") return `<pre>${escapeHtml(note.content)}</pre>`;
 
   if (note.type === "image") {
-    return `<div class="empty">图片笔记（${escapeHtml(note.mime)}）——本版本不在移动端渲染二进制内容。</div>`;
+    if (note.dataUrl) return `<img class="note-image" src="${note.dataUrl}" alt="${escapeAttr(note.title)}" />`;
+    return `<div class="empty">图片还在服务端，点上面的「下载正文」取回。</div>`;
   }
 
   if (note.type === "file") {
-    return `<div class="empty">附件笔记（${escapeHtml(note.mime)}）——需在桌面端打开。</div>`;
+    if (note.dataUrl) {
+      return `<a class="note-file" href="${note.dataUrl}" download="${escapeAttr(note.title)}">
+        ${icon("file")} 下载 ${escapeHtml(note.title)}
+      </a>`;
+    }
+    return `<div class="empty">附件笔记（${escapeHtml(note.mime)}）——需先下载。</div>`;
   }
 
   return sanitizeHtml(note.content);
@@ -1208,6 +1227,10 @@ function wire(): void {
     void saveFromEditor();
   });
 
+  document.getElementById("editor-image")?.addEventListener("click", () => {
+    void addImageToInbox();
+  });
+
   // `⌘/Ctrl + Enter` keeps the keyboard shortcut the inline form had.
   document.getElementById("editor-body")?.addEventListener("keydown", (event) => {
     const keyboard = event as KeyboardEvent;
@@ -1261,7 +1284,47 @@ function wire(): void {
     history.back();
   });
 
+  document.getElementById("add-attachment")?.addEventListener("click", () => {
+    void addAttachmentToOpenNote();
+  });
+
   if (state.openNoteId) void wireDetail(state.openNoteId);
+}
+
+/**
+ * Ask for a file.
+ *
+ * `<input type="file">` is the only picker a WebView offers, and on HarmonyOS it does nothing at all
+ * unless the shell implements `onShowFileSelector` — which `Index.ets` now does. Kept as a promise so
+ * callers read like the rest of the app rather than like event plumbing.
+ */
+function pickFile(accept: string): Promise<File | null> {
+  return new Promise((resolve) => {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = accept;
+    input.style.display = "none";
+    document.body.appendChild(input);
+
+    input.addEventListener("change", () => {
+      const file = input.files?.[0] ?? null;
+      input.remove();
+      resolve(file);
+    });
+
+    // A cancelled picker fires no event in some engines; `cancel` covers the ones that do.
+    input.addEventListener("cancel", () => {
+      input.remove();
+      resolve(null);
+    });
+
+    input.click();
+  });
+}
+
+/** Read a picked file as bytes, for a path that expects a `Uint8Array`. */
+async function readBytes(file: File): Promise<Uint8Array> {
+  return new Uint8Array(await file.arrayBuffer());
 }
 
 /** Write the editor's contents as a note, then leave. */
@@ -1302,6 +1365,71 @@ async function saveFromEditor(): Promise<void> {
     showToast(error instanceof Error ? error.message : String(error), true);
   } finally {
     state.busy = false;
+  }
+}
+
+/**
+ * Add an image as an image note in the inbox.
+ *
+ * An image note rather than an attachment, because that is what a picture taken on a phone is: a
+ * thing of its own that happens to live in the inbox, exactly as Trilium models a standalone image.
+ * The editor's text is kept, so a picture and a thought can be captured together.
+ */
+async function addImageToInbox(): Promise<void> {
+  const file = await pickFile("image/*");
+  if (!file) return;
+
+  try {
+    const inbox = await api.inboxNoteId();
+    const title = state.editorTitle.trim() || file.name.replace(/\.[^.]+$/, "") || "图片";
+
+    const created = await api.createImageNote({
+      parentNoteId: inbox,
+      title,
+      mime: file.type || "image/png",
+      bytes: await readBytes(file)
+    });
+
+    // Keep whatever was typed, then leave: the image is saved and the text still needs saving.
+    state.editorBody = (document.getElementById("editor-body") as HTMLTextAreaElement | null)?.value
+      ?? state.editorBody;
+
+    await refreshChrome();
+    showToast(`已添加图片 ${file.name}`, false);
+
+    if (!state.editorBody.trim()) {
+      state.editorOpen = false;
+      history.back();
+    }
+
+    await render();
+    void created;
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), true);
+  }
+}
+
+/** Attach a file to the note that is open. */
+async function addAttachmentToOpenNote(): Promise<void> {
+  const noteId = state.openNoteId;
+  if (!noteId) return;
+
+  const file = await pickFile("*/*");
+  if (!file) return;
+
+  try {
+    await api.attachFile({
+      ownerNoteId: noteId,
+      title: file.name,
+      mime: file.type || "application/octet-stream",
+      bytes: await readBytes(file)
+    });
+
+    await refreshChrome();
+    showToast(`已附加 ${file.name}`, false);
+    await render();
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : String(error), true);
   }
 }
 

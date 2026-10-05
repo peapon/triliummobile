@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001BD2F9989A285EB2FA9C87A2639DB929D5526604116E3780E26807CC296FF8E480ED6E7172C6E5E0",
+          "profile": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/penn/.ohos/config/default_harmony-probe_-ZU1dP3WJiFTxju1JaeSmu1FQB0lxpVaiJYv1NGNE0k=.p12",
+          "storePassword": "0000001B30F1D8F71BF7965AA7C394072621FD9F8C7ECBE86DEFADE0EDE10B98606D1AAF905B3FBBBE12A3"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",
@@ -12,8 +26,12 @@
       }
     ],
     "buildModeSet": [
-      { "name": "debug" },
-      { "name": "release" }
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
     ]
   },
   "modules": [
@@ -21,7 +39,12 @@
       "name": "entry",
       "srcPath": "./entry",
       "targets": [
-        { "name": "default", "applyToProducts": ["default"] }
+        {
+          "name": "default",
+          "applyToProducts": [
+            "default"
+          ]
+        }
       ]
     }
   ]

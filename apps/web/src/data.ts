@@ -27,6 +27,13 @@ export interface NoteDetail extends NoteSummary {
   /** True when sync stubbed the blob because it exceeded the size cap. */
   contentStubbed: boolean;
   labels: Array<{ name: string; value: string }>;
+  /**
+   * A `data:` URL for a binary note, so an image can be shown without a second round trip.
+   *
+   * Data URLs rather than object URLs because the value crosses the worker boundary as JSON, and
+   * object URLs are per-realm. The images this client deals with are photographs, not archives.
+   */
+  dataUrl: string | null;
 }
 
 export class NoteQueries {
@@ -113,7 +120,11 @@ export class NoteQueries {
       [noteId]
     );
 
-    const text = decodeContent(blob?.content);
+    // A binary note keeps its bytes; decoding them as UTF-8 would produce mojibake, which is what
+    // the placeholder used to stand in for.
+    const isBinary = note.type === "image" || note.type === "file";
+    const text = isBinary ? "" : decodeContent(blob?.content);
+    const dataUrl = isBinary ? toDataUrl(blob?.content, note.mime) : null;
 
     // The same test the server uses: empty content under a blobId that is not the hash of empty
     // content. Checking "is the content empty" alone would label every genuinely empty note as an
@@ -126,6 +137,7 @@ export class NoteQueries {
       parentNoteId: parentRow?.parentNoteId ?? null,
       content: text,
       contentStubbed: stubbed,
+      dataUrl,
       labels
     };
   }
@@ -208,6 +220,20 @@ function escapeLike(input: string): string {
  * during a sync. Decoding is all this does — whether the result is a *stub* is a question about the
  * blob id, not about the content, and is answered where the id is known.
  */
+/** Wrap a blob's bytes as a `data:` URL, so the renderer can show them directly. */
+export function toDataUrl(content: unknown, mime: string): string | null {
+  if (!(content instanceof Uint8Array) || content.byteLength === 0) return null;
+
+  let binary = "";
+  // Chunked: `String.fromCharCode(...bytes)` blows the argument limit on anything photograph-sized.
+  const CHUNK = 0x8000;
+  for (let at = 0; at < content.length; at += CHUNK) {
+    binary += String.fromCharCode(...content.subarray(at, at + CHUNK));
+  }
+
+  return `data:${mime || "application/octet-stream"};base64,${btoa(binary)}`;
+}
+
 export function decodeContent(content: unknown): string {
   if (content === null || content === undefined) return "";
   if (typeof content === "string") return content;

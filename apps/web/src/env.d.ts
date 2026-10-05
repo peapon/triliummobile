@@ -35,3 +35,6 @@ interface ImportMetaEnv {
 interface ImportMeta {
   readonly env: ImportMetaEnv;
 }
+
+/** Injected by Vite. Lets a device log say which build it is running. */
+declare const __BUILD_ID__: string;

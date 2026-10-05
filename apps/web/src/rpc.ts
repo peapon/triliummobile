@@ -54,6 +54,20 @@ export interface AppApi {
   /** Notes of one Trilium type, for the AI chat list. */
   notesOfType(type: string, limit?: number): Promise<NoteSummary[]>;
   createTextNote(options: { parentNoteId: string; title: string; content: string }): Promise<{ noteId: string }>;
+  /** An image note: the picture is the note itself, which is how Trilium stores a standalone image. */
+  createImageNote(options: {
+    parentNoteId: string;
+    title: string;
+    mime: string;
+    bytes: Uint8Array;
+  }): Promise<{ noteId: string }>;
+  /** Attach a file to an existing note. `role` is derived from the MIME type, as Trilium does. */
+  attachFile(options: {
+    ownerNoteId: string;
+    title: string;
+    mime: string;
+    bytes: Uint8Array;
+  }): Promise<{ attachmentId: string }>;
   inboxNoteId(): Promise<string>;
   /** Replace a note's HTML — the tablet's light-editing path. */
   updateNoteContent(noteId: string, content: string): Promise<void>;
@@ -192,6 +206,10 @@ export class WorkerClient implements AppApi {
 
   createTextNote = (options: { parentNoteId: string; title: string; content: string }) =>
     this.call("createTextNote", options);
+  createImageNote = (options: { parentNoteId: string; title: string; mime: string; bytes: Uint8Array }) =>
+    this.call("createImageNote", options);
+  attachFile = (options: { ownerNoteId: string; title: string; mime: string; bytes: Uint8Array }) =>
+    this.call("attachFile", options);
 
   inboxNoteId = () => this.call("inboxNoteId");
   updateNoteContent = (noteId: string, content: string) => this.call("updateNoteContent", noteId, content);

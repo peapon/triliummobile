@@ -481,10 +481,20 @@ export class LocalStore {
    * convention (`../entities/hashes.ts`). Getting it wrong here does not fail the push — it makes
    * the other side's content-hash check disagree, every round, forever.
    */
-  createTextNote(options: {
+  /**
+   * Create a note under `parentNoteId`, with its own blob.
+   *
+   * One path for every note type this client can make. Text and image notes differ only in `type`,
+   * `mime`, and whether the bytes are a string or a `Uint8Array` — the rows, the branch, and the
+   * three entity changes are identical, which is exactly how Trilium models it. An image note is not
+   * a special case in the database; it is a note whose blob happens to be a PNG.
+   */
+  createNote(options: {
     parentNoteId: string;
     title: string;
-    content: string;
+    type: string;
+    mime: string;
+    content: string | Uint8Array;
     now?: Date;
   }): { noteId: string; branchId: string; blobId: string } {
     const now = options.now ?? new Date();
@@ -507,8 +517,8 @@ export class LocalStore {
       noteId,
       title: options.title,
       isProtected: 0,
-      type: "text",
-      mime: "text/html",
+      type: options.type,
+      mime: options.mime,
       blobId,
       isDeleted: 0,
       deleteId: null,
@@ -551,13 +561,34 @@ export class LocalStore {
     return { noteId, branchId, blobId };
   }
 
-  /**
-   * Replace a note's content — the "light editing" path the tablet needs, and also how an ink
-   * placeholder is appended to a note after its stroke file is written.
-   *
-   * Content is content-addressed: a new blob id is derived from the new HTML, so an unchanged save
-   * is a no-op on the wire and an edit that produces identical bytes costs nothing.
-   */
+  createTextNote(options: {
+    parentNoteId: string;
+    title: string;
+    content: string;
+    now?: Date;
+  }): { noteId: string; branchId: string; blobId: string } {
+    return this.createNote({ ...options, type: "text", mime: "text/html" });
+  }
+
+  /** An image note: the picture is the note, which is how Trilium stores a standalone image. */
+  createImageNote(options: {
+    parentNoteId: string;
+    title: string;
+    mime: string;
+    bytes: Uint8Array;
+    now?: Date;
+  }): { noteId: string; branchId: string; blobId: string } {
+    const mime = options.mime.startsWith("image/") ? options.mime : "image/png";
+    return this.createNote({
+      parentNoteId: options.parentNoteId,
+      title: options.title,
+      type: "image",
+      mime,
+      content: options.bytes,
+      now: options.now
+    });
+  }
+
   updateNoteContent(noteId: string, content: string, now: Date = new Date()): void {
     const existing = this.db.get<{ blobId: string | null }>(
       "SELECT blobId FROM notes WHERE noteId = ?",
@@ -604,7 +635,8 @@ export class LocalStore {
     role: string;
     mime: string;
     title: string;
-    content: string;
+    /** `string` for the text-ish attachments this client already made (ink JSON); bytes otherwise. */
+    content: string | Uint8Array;
     now?: Date;
   }): { attachmentId: string; blobId: string } {
     const now = options.now ?? new Date();

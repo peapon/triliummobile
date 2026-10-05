@@ -11,7 +11,21 @@ import { defineConfig } from "vite";
  */
 const TRILIUM_TARGET = process.env.TRILIUM_TARGET ?? "http://127.0.0.1:18740";
 
+const BUILD_ID = `${new Date().toISOString().slice(0, 16).replace("T", " ")} ${
+  process.env.BUILD_ID ?? ""
+}`.trim();
+
 export default defineConfig({
+  /**
+   * Stamp the build so a device's own log can say which one it is running.
+   *
+   * Added after installing a stale package twice and only finding out by reading the bundled JS by
+   * hand. `process.env.BUILD_ID` is set by the packaging script to the commit it is building from.
+   */
+  define: {
+    __BUILD_ID__: JSON.stringify(BUILD_ID)
+  },
+
   server: {
     port: 5273,
     strictPort: true,

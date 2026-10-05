@@ -17,6 +17,7 @@
 
 import { hilog } from "@kit.PerformanceAnalysisKit";
 import { webview } from "@kit.ArkWeb";
+import { picker } from "@kit.CoreFileKit";
 
 import { ApiProxy } from "../services/ApiProxy";
 import { ShellState } from "../services/ShellState";
@@ -82,6 +83,13 @@ struct Index {
           }
           return this.serveFromPackage(event.request.getRequestUrl());
         })
+        // Without this the page's `<input type="file">` opens nothing: ArkWeb asks the host to run
+        // the picker and waits for the answer, and an unanswered request is an inert button. The
+        // web side picks images and attachments through exactly that element.
+        .onShowFileSelector((event: OnShowFileSelectorEvent) => {
+          this.chooseFiles(event);
+          return true;
+        })
         .javaScriptProxy({
           object: this.api,
           name: "triliumNative",
@@ -124,6 +132,30 @@ struct Index {
    * including ones aimed at the Trilium server, and answering those from the package would silently
    * replace the network with a 404.
    */
+  /**
+   * Run the system picker and hand the chosen files back to the page.
+   *
+   * Without this, the page's `<input type="file">` opens nothing: ArkWeb asks the host to run the
+   * picker and waits for the answer, and an unanswered request is an inert button. The web side
+   * picks both images and attachments through exactly that element.
+   *
+   * Answering with an empty list on cancel or failure is required — the page is blocked on this call,
+   * and a request that is never answered leaves the control permanently stuck.
+   */
+  private chooseFiles(event: OnShowFileSelectorEvent): void {
+    const documentPicker = new picker.DocumentViewPicker(getContext(this));
+
+    documentPicker
+      .select({ maxSelectNumber: 1 })
+      .then((uris: Array<string>) => {
+        event.result.handleFileList(uris ?? []);
+      })
+      .catch((error: BusinessError) => {
+        hilog.warn(DOMAIN, TAG, "file picker failed: %{public}s", error.message);
+        event.result.handleFileList([]);
+      });
+  }
+
   private serveFromPackage(url: string): WebResourceResponse | null {
     if (!url.startsWith(APP_ORIGIN)) {
       return null;

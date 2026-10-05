@@ -307,6 +307,11 @@ async function configureWithSecret(serverHost: string, documentSecret: string): 
   session = probe;
 }
 
+/** Rebuild bytes that crossed the RPC boundary as a plain array. */
+function toBytes(value: Uint8Array | number[]): Uint8Array {
+  return value instanceof Uint8Array ? value : Uint8Array.from(value);
+}
+
 async function configure(serverHost: string, password: string): Promise<void> {
   const probe = new SyncTransport({
     serverHost,
@@ -453,6 +458,27 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
       return queries.recent(request.params[0] ?? 30);
     case "notesOfType":
       return queries.notesOfType(request.params[0], request.params[1]);
+    case "createImageNote": {
+      const { parentNoteId, title, mime, bytes } = request.params[0];
+      return store.createImageNote({ parentNoteId, title, mime, bytes: toBytes(bytes) });
+    }
+    case "attachFile": {
+      const { ownerNoteId, title, mime, bytes } = request.params[0];
+      // `role` is Trilium's own: an attachment shown inline in the text is `image`, anything else is
+      // a plain `file`. Nothing new is introduced.
+      const role = mime.startsWith("image/") ? "image" : "file";
+      const created = store.createAttachment({
+        ownerId: ownerNoteId,
+        role,
+        mime,
+        title,
+        content: toBytes(bytes)
+      });
+
+      // Cache it, so opening the note does not immediately re-download what we just wrote.
+      store.cacheBlob(created.blobId, toBytes(bytes));
+      return created;
+    }
     case "createTextNote":
       return store.createTextNote(request.params[0]);
     case "inboxNoteId":

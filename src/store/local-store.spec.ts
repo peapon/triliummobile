@@ -297,6 +297,77 @@ describe("conflict resolution", () => {
   });
 });
 
+describe("images and attachments", () => {
+  /** A payload that is not valid UTF-8, so a text round trip would corrupt it. */
+  const BINARY = new Uint8Array([0xff, 0xfe, 0x00, 0x80, 0xc3, 0x28, 0xa0, 0xa1]);
+
+  it("stores an image as a note whose blob is the picture", () => {
+    const created = store.createImageNote({
+      parentNoteId: "root",
+      title: "a picture",
+      mime: "image/png",
+      bytes: BINARY
+    });
+
+    const note = store.queryRaw<{ type: string; mime: string }>(
+      "SELECT type, mime FROM notes WHERE noteId = ?",
+      [created.noteId]
+    );
+
+    // An image note is not a special case in the database: it is a note whose blob is a PNG.
+    expect(note?.type).toBe("image");
+    expect(note?.mime).toBe("image/png");
+
+    const blob = store.queryRaw<{ content: Uint8Array }>(
+      "SELECT content FROM blobs WHERE blobId = ?",
+      [created.blobId]
+    );
+    expect(Array.from(blob!.content)).toEqual(Array.from(BINARY));
+  });
+
+  it("refuses to call a non-image mime an image", () => {
+    const created = store.createImageNote({
+      parentNoteId: "root",
+      title: "odd",
+      mime: "application/pdf",
+      bytes: BINARY
+    });
+    const note = store.queryRaw<{ mime: string }>("SELECT mime FROM notes WHERE noteId = ?", [
+      created.noteId
+    ]);
+    expect(note?.mime).toBe("image/png");
+  });
+
+  it("attaches binary bytes without going through a string", () => {
+    const host = store.createTextNote({ parentNoteId: "root", title: "host", content: "<p>x</p>" });
+    const created = store.createAttachment({
+      ownerId: host.noteId,
+      role: "file",
+      mime: "application/octet-stream",
+      title: "payload.bin",
+      content: BINARY
+    });
+
+    const blob = store.queryRaw<{ content: Uint8Array }>(
+      "SELECT content FROM blobs WHERE blobId = ?",
+      [created.blobId]
+    );
+    expect(Array.from(blob!.content)).toEqual(Array.from(BINARY));
+  });
+
+  it("still takes a string for the text attachments ink produces", () => {
+    const host = store.createTextNote({ parentNoteId: "root", title: "host", content: "<p>x</p>" });
+    const created = store.createAttachment({
+      ownerId: host.noteId,
+      role: "file",
+      mime: "application/json",
+      title: "ink-main.json",
+      content: '{"strokes":[]}'
+    });
+    expect(created.blobId).toHaveLength(20);
+  });
+});
+
 describe("switching vaults", () => {
   /**
    * A replica belongs to one vault. Pointing the client at another without wiping leaves the first
