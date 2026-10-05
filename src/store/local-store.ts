@@ -743,6 +743,16 @@ export class LocalStore {
     );
   }
 
+  /** An attachment's raw bytes and mime, for rendering an inline image. */
+  readAttachmentBytes(attachmentId: string): { content: unknown; mime: string } | null {
+    const row = this.db.get<{ content: unknown; mime: string }>(
+      `SELECT b.content AS content, a.mime AS mime FROM attachments a JOIN blobs b ON b.blobId = a.blobId
+        WHERE a.attachmentId = ?`,
+      [attachmentId]
+    );
+    return row ?? null;
+  }
+
   /** Decoded text content of an attachment, for reading a stroke file back. */
   readAttachmentContent(attachmentId: string): string | null {
     const row = this.db.get<{ content: unknown }>(

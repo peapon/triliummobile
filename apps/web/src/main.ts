@@ -70,6 +70,8 @@ interface AppState {
   editorOpen: boolean;
   editorTitle: string;
   editorBody: string;
+  /** How many images are waiting to be attached when the note is saved. */
+  editorImages: number;
   /** Search is a screen of its own, not a tab. */
   searchOpen: boolean;
   /** The AI chat list, opened from the home action row. */
@@ -114,6 +116,7 @@ const state: AppState = {
   editorOpen: false,
   editorTitle: "",
   editorBody: "",
+  editorImages: 0,
   searchOpen: false,
   searchQuery: "",
   aiOpen: false
@@ -517,6 +520,16 @@ function renderBootSkeleton(): void {
   `;
 }
 
+/**
+ * Images picked in the editor but not yet attached.
+ *
+ * Held here rather than in `state` because they are `File`s, not markup. An image cannot be attached
+ * before the note it belongs to exists, so it waits for the save — and it becomes an **attachment on
+ * that note**, referenced from the note's own text, which is what inserting a picture into a note
+ * means in Trilium. Creating a separate image note per picture is not that.
+ */
+let pendingImages: File[] = [];
+
 /** Small pieces of cross-view state, refreshed after actions rather than on every render. */
 async function refreshChrome(): Promise<void> {
   state.configured = await api.isConfigured();
@@ -905,6 +918,9 @@ function renderEditor(): string {
       <div class="view">
         <input id="editor-title" placeholder="标题（可留空）" value="${escapeAttr(state.editorTitle)}" autocomplete="off" />
         <textarea id="editor-body" placeholder="记你想记…" autofocus>${escapeHtml(state.editorBody)}</textarea>
+        ${state.editorImages > 0
+          ? `<div class="pending-images">${state.editorImages} 张图片将插入正文</div>`
+          : ""}
       </div>
     </div>
   `;
@@ -1056,7 +1072,7 @@ async function renderDetail(noteId: string): Promise<string> {
   const body =
     state.detailMode === "edit"
       ? `<div id="editor" class="editor" contenteditable="true" spellcheck="false">${sanitizeHtml(note.content)}</div>`
-      : `${stubbed}${renderContent(note)}`;
+      : `${stubbed}${await renderContent(note)}`;
 
   // In ink mode the content stops scrolling so the strokes stay aligned with what they annotate.
   const inkLayer =
@@ -1123,7 +1139,7 @@ function renderInkToolbar(): string {
  * views. It is sanitised first: a note may have arrived from any server, and in the native shell
  * this document has a JS bridge attached.
  */
-function renderContent(note: NoteDetail): string {
+async function renderContent(note: NoteDetail): Promise<string> {
   if (note.content === "") return `<div class="empty">（空笔记）</div>`;
 
   if (note.type === "code") return `<pre>${escapeHtml(note.content)}</pre>`;
@@ -1142,7 +1158,7 @@ function renderContent(note: NoteDetail): string {
     return `<div class="empty">附件笔记（${escapeHtml(note.mime)}）——需先下载。</div>`;
   }
 
-  return sanitizeHtml(note.content);
+  return rewriteAttachmentUrls(sanitizeHtml(note.content));
 }
 
 // ---------------------------------------------------------------------- wire
@@ -1248,7 +1264,7 @@ function wire(): void {
   });
 
   document.getElementById("editor-image")?.addEventListener("click", () => {
-    void addImageToInbox();
+    void addImageToEditor();
   });
 
   // `⌘/Ctrl + Enter` keeps the keyboard shortcut the inline form had.
@@ -1349,11 +1365,10 @@ async function readBytes(file: File): Promise<Uint8Array> {
 
 /** Write the editor's contents as a note, then leave. */
 async function saveFromEditor(): Promise<void> {
-  const titleInput = document.getElementById("editor-title") as HTMLInputElement | null;
-  const bodyInput = document.getElementById("editor-body") as HTMLTextAreaElement | null;
+  captureEditorDraft();
 
-  const title = (titleInput?.value ?? state.editorTitle).trim();
-  const body = bodyInput?.value ?? state.editorBody;
+  const title = state.editorTitle.trim();
+  const body = state.editorBody;
 
   if (!title && !body.trim()) {
     showToast("什么都没写", true);
@@ -1367,11 +1382,39 @@ async function saveFromEditor(): Promise<void> {
     const resolved = title || body.trim().split("\n")[0]!.slice(0, 80);
     const inbox = await api.inboxNoteId();
 
-    await api.createTextNote({
+    const created = await api.createTextNote({
       parentNoteId: inbox,
       title: resolved,
       content: `<p>${escapeHtml(body.trim()).replace(/\n/g, "</p><p>")}</p>`
     });
+
+    // Attach each image to the note, then rewrite the content to point at them. Two steps because an
+    // attachment needs the note's id, which only exists once the note does.
+    if (pendingImages.length > 0) {
+      const references: string[] = [];
+
+      for (const file of pendingImages) {
+        const attached = await api.attachFile({
+          ownerNoteId: created.noteId,
+          title: file.name,
+          mime: file.type || "image/png",
+          bytes: await readBytes(file)
+        });
+
+        // Trilium's own reference form for an image attachment inside note text.
+        references.push(
+          `<p><img src="api/attachments/${attached.attachmentId}/image/${encodeURIComponent(file.name)}"></p>`
+        );
+      }
+
+      await api.updateNoteContent(
+        created.noteId,
+        `<p>${escapeHtml(body.trim()).replace(/\n/g, "</p><p>")}</p>${references.join("")}`
+      );
+
+      pendingImages = [];
+      state.editorImages = 0;
+    }
 
     state.editorOpen = false;
     state.editorTitle = "";
@@ -1395,38 +1438,43 @@ async function saveFromEditor(): Promise<void> {
  * thing of its own that happens to live in the inbox, exactly as Trilium models a standalone image.
  * The editor's text is kept, so a picture and a thought can be captured together.
  */
-async function addImageToInbox(): Promise<void> {
+/**
+ * Queue an image for the note being written.
+ *
+ * An image is attached **to the note**, and referenced from the note's own text, which is what
+ * inserting a picture into a note means in Trilium — the same shape a paste produces there. It is
+ * not a note of its own: that was this button's first behaviour and it is not what was asked for.
+ *
+ * The note does not exist yet, so the file waits until the save.
+ */
+async function addImageToEditor(): Promise<void> {
+  // Read the fields back into state *before* anything re-renders. `commit` replaces the whole body,
+  // so an unsaved draft lives only in the DOM and is destroyed by the next render — which meant
+  // picking a picture silently discarded the note being written.
+  captureEditorDraft();
+
   const file = await pickFile("image/*");
   if (!file) return;
 
-  try {
-    const inbox = await api.inboxNoteId();
-    const title = state.editorTitle.trim() || file.name.replace(/\.[^.]+$/, "") || "图片";
+  pendingImages = [...pendingImages, file];
+  state.editorImages = pendingImages.length;
+  await render();
+}
 
-    const created = await api.createImageNote({
-      parentNoteId: inbox,
-      title,
-      mime: file.type || "image/png",
-      bytes: await readBytes(file)
-    });
+/**
+ * Copy the editor's live fields into state.
+ *
+ * The editor is re-rendered from state, and the DOM is the only place a draft exists between
+ * keystrokes, so anything that re-renders while it is open has to call this first.
+ */
+function captureEditorDraft(): void {
+  if (!state.editorOpen) return;
 
-    // Keep whatever was typed, then leave: the image is saved and the text still needs saving.
-    state.editorBody = (document.getElementById("editor-body") as HTMLTextAreaElement | null)?.value
-      ?? state.editorBody;
+  const title = document.getElementById("editor-title") as HTMLInputElement | null;
+  const body = document.getElementById("editor-body") as HTMLTextAreaElement | null;
 
-    await refreshChrome();
-    showToast(`已添加图片 ${file.name}`, false);
-
-    if (!state.editorBody.trim()) {
-      state.editorOpen = false;
-      history.back();
-    }
-
-    await render();
-    void created;
-  } catch (error) {
-    showToast(error instanceof Error ? error.message : String(error), true);
-  }
+  if (title) state.editorTitle = title.value;
+  if (body) state.editorBody = body.value;
 }
 
 /** Attach a file to the note that is open. */
@@ -1451,6 +1499,30 @@ async function addAttachmentToOpenNote(): Promise<void> {
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), true);
   }
+}
+
+/**
+ * Point `api/attachments/<id>/image/<name>` at the bytes already in the local replica.
+ *
+ * That URL is Trilium's own way of referencing an attachment from note text, and it is what gets
+ * written when an image is inserted. This client has no HTTP route for it, so the reference is
+ * swapped for a `data:` URL from the local blob — which also means an inline image renders offline.
+ *
+ * Asynchronous because each one is a lookup; the placeholders are resolved before the markup is
+ * returned so nothing flashes.
+ */
+async function rewriteAttachmentUrls(html: string): Promise<string> {
+  const matches = [...html.matchAll(/src="api\/attachments\/([A-Za-z0-9]+)\//g)];
+  if (matches.length === 0) return html;
+
+  let out = html;
+  for (const match of matches) {
+    const dataUrl = await api.attachmentDataUrl(match[1]!);
+    if (!dataUrl) continue;
+    out = out.replaceAll(`src="api/attachments/${match[1]}/`, `src="${dataUrl}#`);
+  }
+
+  return out;
 }
 
 /** The search screen's body, rendered on its own so typing does not re-render the whole app. */

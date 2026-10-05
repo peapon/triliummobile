@@ -6,7 +6,7 @@
  */
 
 import { BlobCache, DEFAULT_BLOB_CACHE_BYTES } from "../../../src/store/blob-cache.js";
-import { NoteQueries } from "./data.js";
+import { NoteQueries, toDataUrl } from "./data.js";
 import type { HttpRelayResult, MainMessage } from "./rpc.js";
 import type { ProgressEvent, RpcRequest, WorkerMessage } from "./rpc.js";
 import {
@@ -461,6 +461,13 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     case "createImageNote": {
       const { parentNoteId, title, mime, bytes } = request.params[0];
       return store.createImageNote({ parentNoteId, title, mime, bytes: toBytes(bytes) });
+    }
+    case "attachmentDataUrl": {
+      // Inline images in a note's text point at `api/attachments/<id>/image/<name>`. This client has
+      // no HTTP route for that, so the bytes have to be handed to the renderer directly.
+      const found = store.readAttachmentBytes(request.params[0]);
+      if (!found) return null;
+      return toDataUrl(found.content, found.mime);
     }
     case "attachFile": {
       const { ownerNoteId, title, mime, bytes } = request.params[0];

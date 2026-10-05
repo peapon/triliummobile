@@ -57,16 +57,19 @@ struct Index {
   private controller: webview.WebviewController = new webview.WebviewController();
   private api: ApiProxy = new ApiProxy();
 
+  /** Empty once the page is up. A permanent "ready" line costs a row to say nothing is wrong. */
   @State private status: string = "正在启动…";
 
   build() {
     Column() {
-      Text(this.status)
-        .fontSize(12)
-        .fontColor("#666666")
-        .padding(6)
-        .width("100%")
-        .backgroundColor("#F2F2F2")
+      if (this.status !== "") {
+        Text(this.status)
+          .fontSize(12)
+          .fontColor("#666666")
+          .padding(6)
+          .width("100%")
+          .backgroundColor("#F2F2F2")
+      }
 
       Web({ src: `${APP_ORIGIN}/index.html`, controller: this.controller })
         .domStorageAccess(true)
@@ -101,7 +104,7 @@ struct Index {
 
           try {
             webview.WebviewController.enablePrivateNetworkAccess(false);
-            this.status = "就绪";
+            this.status = "";
           } catch (error) {
             this.status = `enablePrivateNetworkAccess 失败：${(error as BusinessError).message}`;
           }

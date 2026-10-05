@@ -61,6 +61,8 @@ export interface AppApi {
     mime: string;
     bytes: Uint8Array;
   }): Promise<{ noteId: string }>;
+  /** A `data:` URL for an attachment, so an inline image in a note can be shown. */
+  attachmentDataUrl(attachmentId: string): Promise<string | null>;
   /** Attach a file to an existing note. `role` is derived from the MIME type, as Trilium does. */
   attachFile(options: {
     ownerNoteId: string;
@@ -208,6 +210,7 @@ export class WorkerClient implements AppApi {
     this.call("createTextNote", options);
   createImageNote = (options: { parentNoteId: string; title: string; mime: string; bytes: Uint8Array }) =>
     this.call("createImageNote", options);
+  attachmentDataUrl = (attachmentId: string) => this.call("attachmentDataUrl", attachmentId);
   attachFile = (options: { ownerNoteId: string; title: string; mime: string; bytes: Uint8Array }) =>
     this.call("attachFile", options);
 
