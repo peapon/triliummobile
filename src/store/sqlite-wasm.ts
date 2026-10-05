@@ -23,7 +23,12 @@ import type { SqlDatabase, SqlValue } from "./database.js";
 
 /** The subset of sqlite3's oo1 API this adapter uses. */
 interface Oo1Database {
-  createFunction(name: string, fn: (...args: never[]) => unknown): unknown;
+  createFunction(options: {
+    name: string;
+    xFunc: (...args: never[]) => unknown;
+    arity?: number;
+    deterministic?: boolean;
+  }): unknown;
   exec(sql: string): unknown;
   exec(options: {
     sql: string;
@@ -71,7 +76,20 @@ export class SqliteWasmDatabase implements SqlDatabase {
 
   registerFunction(name: string, fn: (...args: unknown[]) => unknown): void {
     // sqlite-wasm hands the function a context pointer first, then the arguments.
-    this.db.createFunction(name, (_ctx: number, ...args: unknown[]) => fn(...args) as never);
+    //
+    // `arity` must be stated. The default is derived from `xFunc.length - 1`, and a wrapper written
+    // with a rest parameter has a `.length` of 1, so the default came out at **0** — sqlite then
+    // rejected every call with "wrong number of arguments to function strip_tags()", which broke
+    // search outright in the browser and on device while passing in Node, whose adapter takes the
+    // arity from the function it is handed.
+    // The object form is the one whose options this adapter can state; the positional overload does
+    // not accept them here.
+    this.db.createFunction({
+      name,
+      xFunc: (_ctx: number, ...args: unknown[]) => fn(...args) as never,
+      arity: 1,
+      deterministic: true
+    });
   }
 
   exec(sql: string): void {
