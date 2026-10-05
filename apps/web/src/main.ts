@@ -133,6 +133,8 @@ interface AppState {
   sheet: Sheet;
   /** Unattended sync interval in seconds. */
   syncIntervalSeconds: number;
+  /** The inbox note's title, empty meaning "the name for the current language". */
+  inboxTitle: string;
   /** The in-app dialog that is up, if any. */
   dialog: Dialog | null;
   /** The note ids walked into, root first. Empty means the tree root. */
@@ -185,6 +187,7 @@ const state: AppState = {
   sort: "position",
   sheet: "none",
   syncIntervalSeconds: DEFAULT_SYNC_INTERVAL_SECONDS,
+  inboxTitle: "",
   dialog: null,
   libraryPath: [],
   libraryTitles: [],
@@ -382,6 +385,7 @@ async function boot(): Promise<void> {
     // paint is in the wrong one. Asking the worker also puts *its* messages in the same language:
     // this device's override wins, the vault's `locale` is the fallback, Chinese the default.
     setLanguage(await api.language());
+    state.inboxTitle = await api.inboxTitle();
 
     // Tell the worker where its network comes from before anything tries to use it.
     const bridged = hasNativeBridge();
@@ -2284,6 +2288,13 @@ async function renderSettings(): Promise<void> {
       </div>
 
       <div class="field">
+        <label for="inbox-title">${t("settings.inboxTitle")}</label>
+        <input id="inbox-title" type="text" value="${escapeAttr(state.inboxTitle)}"
+               placeholder="${escapeAttr(t("inbox.title"))}" autocomplete="off" />
+        <p class="field-hint">${t("settings.inboxTitleHint")}</p>
+      </div>
+
+      <div class="field">
         <label for="sync-interval">${t("settings.syncInterval")}</label>
         <select id="sync-interval">
           ${SYNC_INTERVALS.map(
@@ -2312,6 +2323,17 @@ async function renderSettings(): Promise<void> {
     const language = (event.currentTarget as HTMLSelectElement).value as Language;
     await api.setLanguage(language);
     setLanguage(language);
+    // The inbox keeps its configured name, but an unconfigured one follows the language — so the
+    // field is refilled from the worker rather than left showing the previous language's default.
+    state.inboxTitle = await api.inboxTitle();
+    await renderSettings();
+  });
+
+  document.getElementById("inbox-title")?.addEventListener("change", async (event) => {
+    const title = (event.currentTarget as HTMLInputElement).value.trim();
+    await api.setInboxTitle(title);
+    state.inboxTitle = await api.inboxTitle();
+    await refreshChrome();
     await renderSettings();
   });
 

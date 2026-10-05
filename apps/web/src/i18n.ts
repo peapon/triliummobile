@@ -229,7 +229,10 @@ const CN: Record<string, string> = {
   "e2e.editBody": "{marker} 已编辑",
 
   // Inbox
-  "inbox.body": "<p>由 TriliumMobile 自动创建，手机端的速记都会落在这里。</p>"
+  "inbox.title": "速记 Inbox",
+  "inbox.body": "<p>由 TriliumMobile 自动创建，手机端的速记都会落在这里。</p>",
+  "settings.inboxTitle": "收件箱名称",
+  "settings.inboxTitleHint": "速记都保存在这条笔记下。改名不会丢失任何东西。"
 };
 
 const EN: Record<string, string> = {
@@ -427,7 +430,10 @@ const EN: Record<string, string> = {
   "e2e.captureBody": "Created offline by the HarmonyOS device: {marker}",
   "e2e.editBody": "{marker} edited",
 
-  "inbox.body": "<p>Created automatically by TriliumMobile. Quick notes from the phone all land here.</p>"
+  "inbox.title": "Quick notes Inbox",
+  "inbox.body": "<p>Created automatically by TriliumMobile. Quick notes from the phone all land here.</p>",
+  "settings.inboxTitle": "Inbox note title",
+  "settings.inboxTitleHint": "Quick notes are kept under this note. Renaming it loses nothing."
 };
 
 const CATALOGUES: Record<Language, Record<string, string>> = { cn: CN, en: EN };

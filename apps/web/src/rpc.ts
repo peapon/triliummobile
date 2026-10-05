@@ -86,6 +86,9 @@ export interface AppApi {
   loadInk(noteId: string): Promise<{ attachmentId: string | null; doc: string | null }>;
   saveInk(noteId: string, doc: string): Promise<{ attachmentId: string }>;
   maxBlobContentSize(): Promise<number>;
+  inboxTitle(): Promise<string>;
+  /** An empty string restores the name for the current language. */
+  setInboxTitle(title: string): Promise<void>;
   /** Unattended sync interval in seconds; 0 disables it. */
   syncIntervalSeconds(): Promise<number>;
   setSyncIntervalSeconds(seconds: number): Promise<void>;
@@ -243,6 +246,8 @@ export class WorkerClient implements AppApi {
   loadInk = (noteId: string) => this.call("loadInk", noteId);
   saveInk = (noteId: string, doc: string) => this.call("saveInk", noteId, doc);
   maxBlobContentSize = () => this.call("maxBlobContentSize");
+  inboxTitle = () => this.call("inboxTitle");
+  setInboxTitle = (title: string) => this.call("setInboxTitle", title);
   syncIntervalSeconds = () => this.call("syncIntervalSeconds");
   setSyncIntervalSeconds = (seconds: number) => this.call("setSyncIntervalSeconds", seconds);
   language = () => this.call("language");

@@ -22,6 +22,23 @@ import { SyncEngine } from "../../../src/sync/engine.js";
 import { DEFAULT_MAX_BLOB_CONTENT_SIZE, SyncTransport } from "../../../src/sync/transport.js";
 
 const OPTION_INBOX_NOTE_ID = "triliumMobile.inboxNoteId";
+/** What the inbox note is called. Local, like the sync interval: a preference, not vault data. */
+const OPTION_INBOX_TITLE = "triliumMobile.inboxTitle";
+
+/**
+ * Titles an inbox has been created with before, so a vault from an older build is still recognised.
+ *
+ * The inbox is found by its **note id**, which is remembered in an option. The title is only how a
+ * new one is seeded, and how a vault that predates the option is migrated — which is why keeping the
+ * old literal matters: it is what lets an existing Chinese inbox simply be renamed, rather than a
+ * second one appearing beside it.
+ */
+const LEGACY_INBOX_TITLES = ["速记 Inbox"];
+
+function inboxTitle(): string {
+  const configured = store.getOption(OPTION_INBOX_TITLE);
+  return configured && configured.trim() !== "" ? configured : t("inbox.title");
+}
 const SYNC_INTERVAL_OPTION = "triliumMobile.syncIntervalSeconds";
 /** This device's language choice. Local, for the same reason the sync interval is: it is a device
  * preference, not vault data — the vault's own `locale` is the default it overrides. */
@@ -197,9 +214,12 @@ function ensureInbox(): string {
     return remembered;
   }
 
-  const existing = store.queryRaw("SELECT noteId FROM notes WHERE title = ? AND isDeleted = 0 LIMIT 1", [
-    "速记 Inbox"
-  ]);
+  // A vault that predates the option: find the inbox by any title it has been created with.
+  const candidates = [inboxTitle(), ...LEGACY_INBOX_TITLES];
+  const existing = store.queryRaw<{ noteId: string }>(
+    `SELECT noteId FROM notes WHERE isDeleted = 0 AND title IN (${candidates.map(() => "?").join(", ")}) LIMIT 1`,
+    candidates
+  );
 
   if (existing?.noteId) {
     store.setOption(OPTION_INBOX_NOTE_ID, String(existing.noteId));
@@ -215,7 +235,7 @@ function ensureInbox(): string {
 
   const created = store.createTextNote({
     parentNoteId: ROOT_NOTE_ID,
-    title: "速记 Inbox",
+    title: inboxTitle(),
     content: t("inbox.body")
   });
 
@@ -634,6 +654,25 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     }
     case "maxBlobContentSize":
       return maxBlobContentSize();
+    case "inboxTitle":
+      return inboxTitle();
+    case "setInboxTitle": {
+      const title = String(request.params[0] ?? "").trim();
+      // Empty means "go back to the name for the current language", so the option is emptied rather
+      // than filled with a copy of today's default — otherwise changing language would never take.
+      store.setOption(OPTION_INBOX_TITLE, title);
+
+      // Rename the note that exists, so the change is visible now rather than at the next install.
+      // Safe because the inbox is found by its id: the title is presentation.
+      const remembered = store.getOption(OPTION_INBOX_NOTE_ID);
+      if (remembered) {
+        const note = store.queryRaw<{ title: string }>("SELECT title FROM notes WHERE noteId = ?", [remembered]);
+        const wanted = inboxTitle();
+        if (note && note.title !== wanted) store.renameNote(remembered, wanted);
+      }
+
+      return undefined;
+    }
     case "setMaxBlobContentSize":
       store.setOption(OPTION_SYNC_MAX_BLOB_CONTENT_SIZE, String(request.params[0]));
       return undefined;

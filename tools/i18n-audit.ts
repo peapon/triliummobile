@@ -50,9 +50,11 @@ for (const key of allKeys()) {
 /**
  * Files whose visible text must come from the catalogue.
  *
- * `速记 Inbox` is excluded by name and with reason: it is the title of a note stored on the server,
- * so translating it would create a second note in a second language and the inbox would stop being
- * found. Data, not interface.
+ * `速记 Inbox` is excluded by name, and the reason has changed since it was added. It used to be the
+ * title every inbox was created with. It is now only a **migration literal**: the inbox is found by
+ * its note id, and this string exists so that a vault whose inbox was created by an older build is
+ * still recognised and can simply be renamed. It is a value compared against stored data, not text
+ * shown to anybody.
  */
 const UI_FILES = ["apps/web/src/main.ts", "apps/web/src/worker.ts"];
 const ALLOWED_LITERALS = new Set(["速记 Inbox"]);
