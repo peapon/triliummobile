@@ -18,14 +18,17 @@ const APP_URL = process.argv[2] ?? "http://127.0.0.1:5273/";
 const PASSWORD = process.argv[3] ?? "triliumtest123";
 const OUT = process.argv[4] ?? "/tmp/triliummobile-shots";
 
+/**
+ * Wait until no sync is in flight.
+ *
+ * Not on a message: the app bar is deliberately silent when everything is fine, so "settled" is the
+ * sync control being usable again.
+ */
 async function settle(page: Page): Promise<void> {
   await page.waitForFunction(
     () => {
-      const element = document.getElementById("status");
-      if (!element) return false;
-      if (element.classList.contains("busy")) return false;
-      // "已同步" is the resting state after a reload, when there is no fresh message to show.
-      return /已同步|同步完成|项待同步|不一致|失败/.test(element.textContent ?? "");
+      const button = document.getElementById("sync") as HTMLButtonElement | null;
+      return button !== null && !button.disabled;
     },
     undefined,
     { timeout: 180_000 }

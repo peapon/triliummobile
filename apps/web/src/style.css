@@ -189,18 +189,25 @@ body {
   font-weight: 640;
   margin: 0;
   letter-spacing: -0.015em;
-  flex: 1;
+  /* Takes the leftover space and truncates rather than pushing the controls off the edge. */
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
+/* Short by construction — a phrase, never a sentence. See `renderAppbar`. */
 .status {
   font-size: var(--text-xs);
   color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
+  flex: 0 0 auto;
+}
+
+.status[hidden] {
+  display: none;
 }
 
 .status.ok {
@@ -388,8 +395,9 @@ textarea:focus {
 .quick-note input {
   box-shadow: none;
   background: transparent;
-  padding-left: 0;
-  padding-right: 0;
+  padding: var(--space-2) 0;
+  /* 44px, the same floor every other control here keeps. At 40 it measured 42 and failed it. */
+  min-height: var(--tap);
   font-size: var(--text-md);
   font-weight: 600;
 }
@@ -587,6 +595,14 @@ textarea:focus {
 .banner.bad {
   color: var(--danger);
   background: color-mix(in srgb, var(--danger) 10%, var(--surface));
+}
+
+/* A heading, not a notice: no background, no border, a third of the height of a banner. */
+.section-head {
+  font-size: var(--text-xs);
+  color: var(--faint);
+  letter-spacing: 0.02em;
+  padding: var(--space-3) var(--space-1) var(--space-2);
 }
 
 .crumbs {

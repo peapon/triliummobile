@@ -30,34 +30,22 @@ const SERVER_DB = ".trilium-test-data/document.db";
 const failures: string[] = [];
 
 /**
- * Wait until the status line has settled on a terminal message.
+ * Wait until no sync is in flight.
  *
- * Both parts matter. Matching only on the text is wrong twice over: the success message contains
- * "拉取" ("同步完成：拉取 N 项"), so a "not busy" text test hangs on a healthy sync; and
- * "项待同步" is both the pre-sync state and a valid resting state, so a loose pattern returns
- * before the sync it is waiting for has even started.
+ * Deliberately does not look for a phrase. The app bar is silent when everything is fine — showing a
+ * sentence there is what crushed the title to 0px on a 320px phone — so "settled" is the sync
+ * control being usable again, not a message on screen.
  */
-async function waitForStatus(page: Page, pattern: RegExp): Promise<void> {
+async function waitForSettled(page: Page): Promise<void> {
   await page.waitForFunction(
-    (source: string) => {
-      const el = document.getElementById("status");
-      if (!el) return false;
-
-      // The shell marks an in-flight sync with the `busy` class.
-      if (el.classList.contains("busy")) return false;
-
-      return new RegExp(source).test(el.textContent ?? "");
+    () => {
+      const button = document.getElementById("sync") as HTMLButtonElement | null;
+      return button !== null && !button.disabled;
     },
-    pattern.source,
+    undefined,
     { timeout: 180_000 }
   );
 }
-
-/** After connecting, either outcome is terminal. */
-const ANY_SETTLED = /同步完成|项待同步|不一致|失败/;
-
-/** After pressing sync, only a completed round counts. */
-const SYNC_SETTLED = /同步完成|不一致|失败/;
 
 /**
  * Poll until the server's own database satisfies `predicate`.
@@ -173,11 +161,14 @@ async function main(): Promise<void> {
     // First sync pulls the whole server. The tab bar appearing only means the shell rendered, so
     // wait for the status line to report completion before reading any counts from it.
     await page.waitForSelector(".tabbar", { timeout: 120_000 });
-    await waitForStatus(page, ANY_SETTLED);
+    await waitForSettled(page);
     check("setup flow reads the sync seed and completes a first sync", true);
 
-    const bodyText = (await page.textContent("body")) ?? "";
-    const countMatch = bodyText.match(/本地现有\s*([\d,]+)\s*条笔记/);
+    // The count is read from the capture screen's hint rather than a paragraph, so go there first.
+    await page.click('[data-tab="capture"]');
+    await page.waitForSelector("#capture-body");
+    const captureText = (await page.textContent("body")) ?? "";
+    const countMatch = captureText.match(/([\d,]+)\s*条笔记/);
     const pulledNotes = Number((countMatch?.[1] ?? "0").replace(/,/g, ""));
 
     check("the first sync actually populated the local replica", pulledNotes > 0, `${pulledNotes} notes`);
@@ -212,20 +203,21 @@ async function main(): Promise<void> {
 
     // ----------------------------------------------------------------- sync
 
+    // Clicking sync, then waiting for the *server* to show the note. The app bar is silent when it
+    // succeeds — a sentence there is what crushed the title to 0px — so there is no phrase to wait
+    // for, and polling the outcome is immune to the UI's timing in a way a status check is not.
     await page.click("#sync");
-    await waitForStatus(page, SYNC_SETTLED);
 
-    const status = (await page.textContent("#status")) ?? "";
-    check("sync reports success", /同步完成/.test(status), status);
-
-    check(
-      "the captured note is in the server's own database",
-      serverHasTitle(title),
-      `title="${title}"`
-    );
+    const delivered = await waitForServer(() => serverHasTitle(title), 120_000);
+    check("the captured note reached the server's own database", delivered, `title="${title}"`);
 
     const after = serverNoteCount();
     check("server note count increased", after > before, `${before} -> ${after}`);
+
+    // And the client considers itself settled, with nothing left owed.
+    await waitForSettled(page);
+    const statusText = (await page.textContent("#status")) ?? "";
+    check("nothing is left pending once delivered", !/待同步/.test(statusText), statusText);
 
     // ---------------------------------------------------------------- browse
 

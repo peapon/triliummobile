@@ -501,19 +501,32 @@ function measureAppBar(): void {
   }
 }
 
+/**
+ * The app bar carries *state*, never a sentence.
+ *
+ * It used to show the full result message — "同步完成：拉取 2909 项，用时 0.7s" — beside the title. That
+ * text is `nowrap` and the title is `flex: 1; min-width: 0`, so the title lost every fight: measured
+ * at 390px it was given 46px of the 105px it needs, and at 320px it was given **zero**. The name of
+ * the app was unreadable on every screen of every phone.
+ *
+ * The long message is not lost — it goes to a toast, which is where a transient sentence belongs.
+ * What stays here is only what is actionable at a glance.
+ */
 function renderAppbar(): string {
-  const statusClass = state.syncing ? "busy" : state.lastOk ? "ok" : "bad";
-
   const label = state.syncing
-    ? state.progress?.message || "同步中…"
+    ? "同步中"
     : state.pending > 0
-      ? `${state.pending} 项待同步`
-      : state.lastMessage || "已同步";
+      ? `${state.pending} 待同步`
+      : !state.lastOk && state.lastMessage
+        ? "同步失败"
+        : "";
+
+  const statusClass = state.syncing ? "busy" : state.lastOk ? "ok" : "bad";
 
   return `
     <div class="appbar">
       <h1>TriliumMobile</h1>
-      <span class="status ${statusClass}" id="status">${escapeHtml(label)}</span>
+      ${label ? `<span class="status ${statusClass}" id="status">${escapeHtml(label)}</span>` : `<span class="status ${statusClass}" id="status" hidden></span>`}
       <button id="sync" ${state.syncing ? "disabled" : ""}>${state.syncing ? "…" : "同步"}</button>
       <button id="settings" class="icon-only" aria-label="设置">${icon("settings", "icon-lg")}</button>
     </div>
@@ -547,17 +560,10 @@ async function renderView(): Promise<string> {
 function renderCapture(counts: AppCounts): string {
   return `
     <div class="quick-note">
-      <div class="banner">
-        离线可用。保存后写入本地，联网时自动同步。
-        本地现有 ${counts.notes.toLocaleString("en-US")} 条笔记。
-      </div>
-      <div class="field">
-        <label for="capture-title">标题（可留空，自动取首行）</label>
-        <input id="capture-title" placeholder="标题" autocomplete="off" enterkeyhint="next" />
-      </div>
+      <input id="capture-title" placeholder="标题（可留空）" autocomplete="off" enterkeyhint="next" />
       <textarea id="capture-body" placeholder="随手记点什么…" enterkeyhint="enter"></textarea>
       <div class="capture-actions">
-        <span class="hint">⌘/Ctrl + Enter 快速保存</span>
+        <span class="hint">${counts.notes.toLocaleString("en-US")} 条笔记 · ⌘/Ctrl+Enter 保存</span>
         <button class="primary" id="capture-save" ${state.busy ? "disabled" : ""}>保存</button>
       </div>
     </div>
@@ -567,7 +573,9 @@ function renderCapture(counts: AppCounts): string {
 async function renderSearch(): Promise<string> {
   const results = state.query.trim() ? await api.search(state.query) : await api.recent(30);
 
-  const heading = state.query.trim() ? `${results.length} 条结果` : "最近修改（输入以搜索标题与正文）";
+  const heading = state.query.trim()
+    ? `${results.length} 条结果`
+    : `最近修改 · ${results.length}`;
 
   const body =
     results.length === 0
@@ -575,9 +583,9 @@ async function renderSearch(): Promise<string> {
       : `<div class="list">${await renderRows(results)}</div>`;
 
   return `
-    <input id="search-input" type="search" placeholder="搜索…" value="${escapeAttr(state.query)}"
+    <input id="search-input" type="search" placeholder="搜索标题与正文…" value="${escapeAttr(state.query)}"
            autocomplete="off" autocorrect="off" spellcheck="false" enterkeyhint="search" />
-    <div class="banner" style="margin-top:12px">${escapeHtml(heading)}</div>
+    <div class="section-head">${escapeHtml(heading)}</div>
     ${body}
   `;
 }
@@ -780,7 +788,7 @@ function wire(): void {
     });
   });
 
-  document.getElementById("sync")?.addEventListener("click", () => void runSync());
+  document.getElementById("sync")?.addEventListener("click", () => void runSync(true));
   document.getElementById("settings")?.addEventListener("click", () => {
     state.settingsOpen = true;
     pushStep();
@@ -1067,7 +1075,14 @@ app.addEventListener("click", (event) => {
 
 // ------------------------------------------------------------------- actions
 
-async function runSync(): Promise<void> {
+/**
+ * Run a sync.
+ *
+ * `announce` distinguishes a sync the user asked for from one that happens on its own. The bar is
+ * silent when everything is fine, so a *manual* sync needs a result it can point at; an automatic
+ * one does not, and announcing every boot sync would be noise.
+ */
+async function runSync(announce = false): Promise<void> {
   state.syncing = true;
   state.lastMessage = "连接中…";
   await render();
@@ -1076,7 +1091,10 @@ async function runSync(): Promise<void> {
     const outcome = await api.sync();
     state.lastOk = outcome.ok;
     state.lastMessage = outcome.message;
-    if (!outcome.ok) showToast(outcome.message, true);
+
+    // The bar only shows "同步失败"; the sentence that explains it arrives as a toast.
+    if (!outcome.ok) showToast(outcome.message || "同步失败", true);
+    else if (announce) showToast(outcome.message || "已同步", false);
   } catch (error) {
     state.lastOk = false;
     state.lastMessage = error instanceof Error ? error.message : String(error);
