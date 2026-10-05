@@ -106,13 +106,23 @@ check(
 // ---------------------------------------------------------------- 搜索
 await page.click("#open-search");
 await page.waitForSelector("#search-input");
-await page.fill("#search-input", "Trilium");
-await page.waitForTimeout(1000);
+// The term is taken from the vault rather than hard-coded, so this does not break when the test
+// server is rebuilt with different contents — which is exactly what happened to it.
+const titleHit = serverQuery<{ title: string }>(
+  `SELECT title FROM notes
+    WHERE isDeleted = 0 AND length(title) > 6
+      AND noteId NOT LIKE '\\_%' ESCAPE '\\'
+    ORDER BY utcDateModified DESC LIMIT 1`
+)[0];
+const term = (titleHit?.title ?? "").split(/[\s(（]/)[0]!.slice(0, 10);
+
+await page.fill("#search-input", term);
+await page.waitForTimeout(1200);
 const searchTitles = await page.locator("#search-results .title").allTextContents();
 check(
-  "搜索：标题命中排在正文之前",
-  searchTitles.length > 0 && searchTitles.slice(0, 3).every((t) => t.includes("Trilium")),
-  searchTitles[0] ?? "(无结果)"
+  "搜索：标题命中排在最前",
+  searchTitles.length > 0 && searchTitles[0]!.includes(term),
+  `搜「${term}」→ ${searchTitles[0] ?? "(无结果)"}`
 );
 await page.fill("#search-input", "div");
 await page.waitForTimeout(1000);
