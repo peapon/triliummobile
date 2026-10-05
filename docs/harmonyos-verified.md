@@ -1,74 +1,84 @@
-# HarmonyOS 可行性验证 — 实测结果
+# HarmonyOS feasibility check — measured results
 
-最后更新：2026-10-05
-环境：DevEco Studio 26.0.0 + HarmonyOS SDK 26.0.0.105（API 26）+ `Mate 90 Pro` 模拟器（`phone_all_arm`, HarmonyOS 7.0.0）
+Last updated: 2026-10-05
+Environment: DevEco Studio 26.0.0 + HarmonyOS SDK 26.0.0.105 (API 26) + a `Mate 90 Pro` emulator (`phone_all_arm`, HarmonyOS 7.0.0)
 
 ---
 
-## 结论速览
+## Summary
 
-| 问题 | 结果 | 证据 |
+| Question | Result | Evidence |
 |---|---|---|
-| 鸿蒙上能不能构建 `.hap`？ | ✅ **能，且不需要华为账号** | `BUILD SUCCESSFUL`，见下方命令 |
-| 能不能在**模拟器**上跑？ | ✅ **能，未签名直接安装** | `hdc install` → `install bundle successfully` |
-| **IndexedDB 真实配额** | ✅ **3.42 GB** | `navigator.storage.estimate()` |
-| **局域网明文 HTTP 能通吗？** | ✅ **能** | `http://192.168.3.213:18899/` → **200, 6ms** |
-| 需要 cleartext 配置吗？ | ❌ **不需要** | 明文 HTTP 直接通，无需任何安全配置 |
-| `enablePrivateNetworkAccess(false)` 有效吗？ | ✅ **有效** | 私有网段地址可达（否则会 `ERR_ACCESS_DENIED`） |
-| WebAssembly / Service Worker / OPFS | ✅ **全部支持** | 逐项探测通过 |
-| **`pointerType === "pen"`** | ⚠️ **仍无法证明** | 见下 |
-| 能直连自建 Trilium 服务端吗？ | ❌ **不能，因为 CORS** | 见「最重要的发现」 |
+| Can a `.hap` be built for HarmonyOS? | ✅ **Yes, and no Huawei account is needed** | `BUILD SUCCESSFUL`, see the commands below |
+| Does it run on the **emulator**? | ✅ **Yes, installed unsigned** | `hdc install` → `install bundle successfully` |
+| **Real IndexedDB quota** | ✅ **3.42 GB** | `navigator.storage.estimate()` |
+| **Does cleartext HTTP over the LAN work?** | ✅ **Yes** | `http://192.168.3.213:18899/` → **200, 6ms** |
+| Is a cleartext configuration needed? | ❌ **No** | Cleartext HTTP just works, with no security configuration of any kind |
+| Does `enablePrivateNetworkAccess(false)` work? | ✅ **Yes** | Private-range addresses are reachable (without it you get `ERR_ACCESS_DENIED`) |
+| WebAssembly / Service Worker / OPFS | ✅ **All supported** | Every probe passed |
+| **`pointerType === "pen"`** | ⚠️ **Still unproven** | See below |
+| Can it talk to a self-hosted Trilium server directly? | ❌ **No, because of CORS** | See "The most important finding" |
 
-**一句话：鸿蒙的技术能力比调研估计的强得多（Chromium 144、明文可用、WASM/OPFS 齐全），真正的障碍不是平台，而是 Trilium 服务端不发 CORS 头。**
-
----
-
-## 最重要的发现：真正的障碍是 CORS，不是鸿蒙
-
-实测四组对照：
-
-```
-https://api.github.com/            -> 200, 808ms   （HTTPS + 有 CORS 头）
-http://10.0.2.2:18899/             -> 200,   6ms   （明文 HTTP + 有 CORS 头）
-http://192.168.3.213:18899/        -> 200,   6ms   （局域网明文 + 有 CORS 头）
-http://10.0.2.2:18740/api/...      -> TypeError: Failed to fetch   （真的 Trilium 服务端）
-```
-
-前三组证明：**网络通、明文 HTTP 通、局域网通**。第四组失败的唯一差别是
-**Trilium 不发 `Access-Control-Allow-Origin`**（且发 `Cross-Origin-Resource-Policy: same-origin`）。
-
-WebView 页面来源是 `resource://rawfile`，所以每个请求都是跨源的，由普通 CORS 规则裁决——
-**这与 ADR D9 在桌面浏览器里得到的结论完全一致**。
-
-因此：`enablePrivateNetworkAccess(false)` 是**必要但远不充分**的。要连自建服务端，必须二选一：
-
-1. **原生壳代为转发**：ArkTS 用 `@ohos.net.http` 发请求，经 `javaScriptProxy` 供网页调用。网页只跟自己的 origin 说话，永远不碰 CORS。
-2. **同源部署**：把 Web 核心由服务端自己托管，或在原生侧起一个本地 HTTP 服务做反代。
-
-> 这也解释了为什么官方 `apps/mobile` 把整个服务端塞进 WebView 里跑 WASM——那样根本不存在跨源问题。
+**In one line: HarmonyOS is technically far more capable than the research estimated (Chromium 144, cleartext usable, WASM/OPFS complete); the real obstacle is not the platform, it is that the Trilium server sends no CORS headers.**
 
 ---
 
-## 对调研结论的修正
+## The most important finding: the real obstacle is CORS, not HarmonyOS
 
-| 调研（`docs/research/02-harmonyos-toolchain.md`） | 实测 |
+Four measured comparisons:
+
+```
+https://api.github.com/            -> 200, 808ms   (HTTPS + CORS headers)
+http://10.0.2.2:18899/             -> 200,   6ms   (cleartext HTTP + CORS headers)
+http://192.168.3.213:18899/        -> 200,   6ms   (LAN cleartext + CORS headers)
+http://10.0.2.2:18740/api/...      -> TypeError: Failed to fetch   (the actual Trilium server)
+```
+
+The first three prove that **the network works, cleartext HTTP works, and the LAN works**. The only
+difference in the fourth is that **Trilium sends no `Access-Control-Allow-Origin`** (and does send
+`Cross-Origin-Resource-Policy: same-origin`).
+
+The WebView page's origin is `resource://rawfile`, so every request is cross-origin and is decided by
+ordinary CORS rules — **exactly the conclusion ADR D9 reached in a desktop browser**.
+
+Therefore `enablePrivateNetworkAccess(false)` is **necessary but nowhere near sufficient**. To reach
+a self-hosted server, one of the two following has to happen:
+
+1. **The native shell relays on its behalf**: ArkTS sends the request with `@ohos.net.http` and
+   exposes it to the page through `javaScriptProxy`. The page only talks to its own origin and never
+   touches CORS.
+2. **Same-origin deployment**: host the web core from the server itself, or start a local HTTP
+   service on the native side to reverse-proxy it.
+
+> This also explains why the official `apps/mobile` stuffs the whole server into the WebView to run
+> as WASM — that way there is no cross-origin problem at all.
+
+---
+
+## Corrections to the research conclusions
+
+| Research (`docs/research/02-harmonyos-toolchain.md`) | Measured |
 |---|---|
-| ArkWeb = Chromium **M132** | ❌ **Chromium 144**.0.0.0（UA: `ArkWeb/7.0.0.105`） |
-| File System Access API 应「假设不支持」 | ❌ **支持**（`showSaveFilePicker` 存在） |
-| 明文 HTTP 默认被拦，需要配置 | ❌ **不成立**——明文直接可通 |
-| 局域网请求需 API 20+ 的 PNA 开关 | ✅ **成立**，且该 API 调用成功 |
-| WASM / Service Worker / OPFS | ✅ 均支持（与调研一致） |
+| ArkWeb = Chromium **M132** | ❌ **Chromium 144**.0.0.0 (UA: `ArkWeb/7.0.0.105`) |
+| File System Access API should be "assumed unsupported" | ❌ **Supported** (`showSaveFilePicker` exists) |
+| Cleartext HTTP is blocked by default and needs configuration | ❌ **Does not hold** — cleartext works as-is |
+| LAN requests need the API 20+ PNA switch | ✅ **Holds**, and that API call succeeds |
+| WASM / Service Worker / OPFS | ✅ All supported (consistent with the research) |
 
-未支持的：`navigator.share`、`Notification`。`Web Share` 缺失对"分享进 Trilium"这个捕获路径有影响，得走别的方式。
+Not supported: `navigator.share`, `Notification`. The missing `Web Share` affects the "share into
+Trilium" capture path, so that has to go another way.
 
-**坚盾守护模式未测试**——它是用户手动开启的模式，模拟器上没有开关。它会关闭 WASM 与 Service Worker，
-所以 `sqlite-wasm` 方案在该模式下会失效；存储层的接口抽象（ADR D5）正是为此留的后路。
+**坚盾守护模式 (Secure Shield mode) was not tested** — it is a mode the user turns on by hand, and
+there is no switch for it on the emulator. It disables WASM and Service Worker, so the `sqlite-wasm`
+approach would fail under it; the storage-layer interface abstraction (ADR D5) is exactly the
+fallback left for that.
 
 ---
 
-## 手写笔：仍然无法证明，但基础设施齐全
+## Stylus: still unprovable, but the whole infrastructure is there
 
-模拟器没有手写笔，`pointerType === "pen"` **无法实测**。能证明的是 ArkWeb 的 Pointer Events 面**完整**：
+The emulator has no stylus, so `pointerType === "pen"` **cannot be measured**. What can be shown is
+that ArkWeb's Pointer Events surface is **complete**:
 
 ```
 hasPointerEvent        : true
@@ -78,16 +88,18 @@ onpointerrawupdate     : true
 maxTouchPoints         : 10
 ```
 
-`getPredictedEvents` 和 `pointerrawupdate` 是低延迟墨迹的关键，两者都在。ArkWeb 是 Chromium 144，
-`pointerType === "pen"` 是 Chromium 的标准行为，**极可能成立**，但在拿到真机手写笔之前不能算已验证。
+`getPredictedEvents` and `pointerrawupdate` are the keys to low-latency ink, and both are present.
+ArkWeb is Chromium 144 and `pointerType === "pen"` is standard Chromium behaviour, so it **very
+likely holds** — but it does not count as verified until there is a real device with a stylus.
 
-**风险仍然真实**：如果它不成立，墨迹批注与自由手绘需要每个平台写原生覆盖层。
+**The risk is real**: if it does not hold, ink annotation and freehand drawing need a native overlay
+written for each platform.
 
 ---
 
-## 复现步骤
+## Reproduction steps
 
-### 构建（不需要任何账号）
+### Build (no account needed)
 
 ```bash
 cd apps/harmony-probe
@@ -96,10 +108,11 @@ export DEVECO_SDK_HOME=/Applications/DevEco-Studio.app/Contents/sdk
 # -> entry/build/default/outputs/default/entry-default-unsigned.hap
 ```
 
-> ⚠️ `apps/harmony-probe/node_modules` 里如果装了 OpenHarmony 版 hvigor，会与 DevEco 自带的那份冲突，
-> 报 `The root node is not yet available for build`。用 DevEco 构建前先移走它。
+> ⚠️ If `apps/harmony-probe/node_modules` has the OpenHarmony build of hvigor installed, it conflicts
+> with the copy bundled with DevEco and you get `The root node is not yet available for build`.
+> Move it aside before building with DevEco.
 
-### 模拟器
+### Emulator
 
 ```bash
 E=/Applications/DevEco-Studio.app/Contents/tools/emulator
@@ -107,37 +120,40 @@ HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/
 
 "$E" -license accept
 "$E" -list                                   # Mate 90 Pro / Mate X7 / MateBook Pro / MatePad Pro 13
-"$E" -start "Mate 90 Pro" -noWindow &        # 启动约 90s
-# 等待 hdc 看到设备：
+"$E" -start "Mate 90 Pro" -noWindow &        # takes about 90s to start
+# wait for hdc to see the device:
 "$HDC" list targets                          # -> 127.0.0.1:5555
 
 "$HDC" install -r entry/build/default/outputs/default/entry-default-unsigned.hap
 "$HDC" shell aa start -a EntryAbility -b org.triliumnotes.mobile
 ```
 
-**未签名的 HAP 可以直接装到模拟器上** —— 真机才需要设备绑定的调试证书。
+**An unsigned HAP installs straight onto the emulator** — only a real device needs a device-bound
+debug certificate.
 
-### 读取探针结果
+### Reading the probe results
 
-探针把结果作为一行 JSON 打到网页 console，ArkTS 侧经 `onConsole` 转发到 hilog：
+The probe prints its result to the web console as one line of JSON, and the ArkTS side forwards it to
+hilog through `onConsole`:
 
 ```bash
 "$HDC" shell hilog -x | grep -a PROBE_JSON | tail -1 | sed 's/.*PROBE_JSON //'
 ```
 
-这样结果是**机器可读**的，不需要截图看屏幕——本模型看不了图片，这一条很关键。
+That makes the result **machine-readable** with no need to screenshot the screen — this model cannot
+read images, so that point is critical.
 
-模拟器还提供 `-instance <name> -click/-slide/-fill/-screenshot` 做 UI 自动化，
-可以驱动触摸输入来观察 `pointerType` 的实际取值。
+The emulator also offers `-instance <name> -click/-slide/-fill/-screenshot` for UI automation, which
+can drive touch input to observe what value `pointerType` actually takes.
 
 ---
 
-## 应用已经跑起来了：端到端在这一刻闭环
+## The app is now running: the end-to-end loop closes here
 
-`apps/harmony-probe` 现在装的不再是探针，而是**真正的客户端**。用 `./package-app.sh` 打包，
-产物 1.47 MB，里面是完整的 Web 核心 + ArkTS 壳。
+`apps/harmony-probe` no longer installs the probe but **the real client**. Packaged with
+`./package-app.sh`, the artifact is 1.47 MB and contains the full web core plus the ArkTS shell.
 
-设备上实测的完整协议往返（从 hilog 读出）：
+The full protocol round trip measured on the device (read out of hilog):
 
 ```
 -> GET  /api/setup/status                              body=0    cookie=no
@@ -149,16 +165,24 @@ HDC=/Applications/DevEco-Studio.app/Contents/sdk/default/openharmony/toolchains/
 shell: boot sync finished ok=true  "同步完成：拉取 2909 项，用时 0.7s"
 ```
 
-**写入方向**同样验证过。在模拟器上离线速记一条，然后**读服务端自己的数据库**确认：
+(In that last line, `同步完成：拉取 2909 项，用时 0.7s` reads "sync complete: pulled 2,909 items in
+0.7s".)
+
+The **write direction** was verified the same way. One note was captured offline on the emulator and
+then confirmed by **reading the server's own database**:
 
 ```
 FOUND nphsq9BOXYyg  鸿蒙设备速记 013516
 content: <p>由鸿蒙设备离线创建：鸿蒙设备速记 013516</p>
 ```
 
-### 三个必需机制，每一个都是被实测逼出来的
+(The stored note title reads "HarmonyOS device quick note 013516", and its body "created offline from
+a HarmonyOS device: HarmonyOS device quick note 013516".)
 
-**1. 页面必须有一个真实 origin。** `resource://rawfile` 的 origin 是 `null`，实测结果：
+### Three required mechanisms, each one forced by a measurement
+
+**1. The page must have a real origin.** The origin of `resource://rawfile` is `null`, and the
+measured result is:
 
 ```
 new Worker("probe.worker.js")
@@ -168,36 +192,42 @@ navigator.storage.getDirectory()
   -> SecurityError: ... files are unsafe for access within a Web application
 ```
 
-也就是说**没有 Worker、没有 OPFS**——而客户端两者都要（OPFS SAH-Pool VFS 因为是
-`createSyncAccessHandle` 所以只能在 Worker 里跑，而副本就存在 OPFS）。
+In other words **no Worker and no OPFS** — and the client needs both (the OPFS SAH-Pool VFS can only
+run inside a Worker because of `createSyncAccessHandle`, and the replica lives in OPFS).
 
-解法：**用 `onInterceptRequest` 把静态资源从包里发出去，页面从 `https://localhost/` 加载**。
-于是 origin 变成真的，Worker 和 OPFS 都可用，而且**不需要在应用里跑任何服务器**。
+The fix: **serve the static assets out of the package with `onInterceptRequest`, and load the page
+from `https://localhost/`**. The origin then becomes real, Worker and OPFS are both available, and
+**no server has to run inside the app**.
 
-**2. `onInterceptRequest` 是同步的，所以它代理不了 API。** 它签名的返回值类型是
-`WebResourceResponse`，没法等一个网络往返。所以 `https://localhost/api/...` 只能返回 `null`。
+**2. `onInterceptRequest` is synchronous, so it cannot proxy the API.** Its signature returns
+`WebResourceResponse`, which cannot wait for a network round trip. So `https://localhost/api/...` can
+only return `null`.
 
-解法：静态资源走拦截，API 走 `javaScriptProxy` 注入的 `triliumNative.request(...)`——
-一个异步方法，网页可以 await。
+The fix: static assets go through the interceptor, the API goes through `triliumNative.request(...)`
+injected by `javaScriptProxy` — an async method the page can await.
 
-**3. 桥在主线程，但引擎在 Worker 里。** 同步引擎必须在 Worker 里（数据库在那儿），
-而注入对象只存在于主 frame。所以 Worker 把每个请求交给主线程转发，主线程调桥，再把结果送回去。
-`SyncTransport` 本来就接受 `fetchImpl`，所以协议代码**一行没改**。
+**3. The bridge is on the main thread, but the engine is in a Worker.** The sync engine has to be in
+the Worker (that is where the database is), while the injected object exists only in the main frame.
+So the Worker hands every request to the main thread to relay, the main thread calls the bridge, and
+the result is sent back. `SyncTransport` already accepted a `fetchImpl`, so the protocol code **did
+not change by a single line**.
 
-### 打包
+### Packaging
 
 ```bash
 cd apps/harmony-probe
-./package-app.sh                       # 生产构建
-./package-app.sh --e2e http://10.0.2.2:18740 <password> "标题"   # 设备端自检构建
+./package-app.sh                       # production build
+./package-app.sh --e2e http://10.0.2.2:18740 <password> "标题"   # on-device self-test build
 ```
 
-`--e2e` 会把服务端地址与密码编进包里，让应用开机自动配置并同步——因为模拟器能驱动触摸，
-但驱动不了 WebView 的 DOM，否则没法脚本化验证。生产构建不含这些变量，函数是惰性的。
+`--e2e` bakes the server address and password into the package so the app configures itself and syncs
+on launch — because the emulator can drive touch but cannot drive the WebView DOM, so there is no
+other way to script the verification. Production builds contain none of these variables and the
+function is inert.
 
-## 在设备上发现并修掉的一个真 bug：时钟偏移
+## A real bug found and fixed on the device: clock skew
 
-折叠屏模拟器上，每一次同步都失败：
+On the foldable emulator, every sync failed:
 
 ```
 POST /api/login/sync failed (HTTP 401): {"message":"Auth request time is out of sync,
@@ -205,35 +235,40 @@ please check that both client and server have correct time. The difference betwe
 clocks has to be smaller than 5 minutes"}
 ```
 
-模拟器的时钟比宿主机慢了一小时。这正是 ADR §5 里列为"设计风险"的那一条，**在真实设备上第一
-次撞上**。
+The emulator's clock was an hour behind the host. This is exactly the item ADR §5 lists as a "design
+risk", and it **was hit on a real device for the first time**.
 
-修法不是让用户自己去对表：**每个响应都带 `Date` 头**，所以偏移是可测量的。传输层现在：
+The fix is not to make the user set their own clock: **every response carries a `Date` header**, so
+the offset is measurable. The transport layer now:
 
-1. 在每次响应上记录 `serverTime - localTime`
-2. 登录失败且原因是时钟时，用测量到的偏移重算时间戳，**重试一次**
+1. records `serverTime - localTime` on every response
+2. when a login fails because of the clock, recomputes the timestamp from the measured offset and
+   **retries once**
 
-修复后同一个设备：
+After the fix, on the same device:
 
 ```
 shell: post-capture sync ok=true message="同步完成：拉取 0 项，用时 0.1s"
 ```
 
-并且**错误**造成的后果被离线优先设计吸收了：时钟错的那段时间设备上创建的笔记留在本地队列里，
-时钟修正后自动补传——服务端数据库里能看到它们全部到齐。
+And the consequences of the **error** were absorbed by the offline-first design: the notes created
+on the device during the clock-skew window stayed in the local queue and were pushed automatically
+once the clock was corrected — the server's database shows every one of them arriving.
 
-## 设备上创建的笔记（读服务端数据库确认）
+## Notes created on the device (confirmed by reading the server database)
 
 ```
-FOUND nphsq9BOXYyg  鸿蒙设备速记 013516      （Mate 90 Pro）
-FOUND zV9FheB6b9jG  鸿蒙平板速记 014726      （时钟错的那段，后来补传）
+FOUND nphsq9BOXYyg  鸿蒙设备速记 013516      (Mate 90 Pro)
+FOUND zV9FheB6b9jG  鸿蒙平板速记 014726      (from the clock-skew window, back-filled later)
 FOUND keQyuGvjOUuq  鸿蒙平板速记 014726
-FOUND vicvRiJItfj1  鸿蒙折叠屏速记 014946    （修复后）
+FOUND vicvRiJItfj1  鸿蒙折叠屏速记 014946    (after the fix)
 ```
 
-## 尚未做
+## Not done yet
 
-- **真机**：需要华为账号实名认证 + 设备绑定证书。模拟器覆盖了绝大部分运行时问题，但
-  `pointerType === "pen"` 与坚盾守护模式只能真机验证。
-- **把 Web 核心打包进 HAP**：目前 HAP 里只有一个探针页。下一步是把 `apps/web` 的产物放进
-  `rawfile`，并写 ArkTS 的 API 转发桥（上面的方案 1）。
+- **Real device**: needs a Huawei account with 实名认证 (real-name verification) plus a device-bound
+  certificate. The emulator covered the vast majority of the runtime questions, but
+  `pointerType === "pen"` and Secure Shield mode (坚盾守护模式) can only be verified on a real device.
+- **Packaging the web core into the HAP**: right now the HAP holds only a probe page. The next step
+  is to put the `apps/web` build output into `rawfile` and write the ArkTS API relay bridge (option 1
+  above).

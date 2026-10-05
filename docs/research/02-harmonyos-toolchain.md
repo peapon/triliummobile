@@ -236,19 +236,19 @@ table applies to every "wrap the web app" option, not just the ArkTS one.**
 
 **Publishing.** HarmonyOS apps are published through **AppGallery / AppGallery Connect (AGC)**. The
 governing documents are the [应用审核指南 (review guidelines)](https://developer.huawei.com/consumer/cn/doc/50104),
-the [应用审核Checklist](https://developer.huawei.com/consumer/cn/doc/app/50170) and the
-[应用审核FAQ](https://developer.huawei.com/consumer/cn/doc/app/50106) `[reported — these are
+the [应用审核Checklist (app review checklist)](https://developer.huawei.com/consumer/cn/doc/app/50170) and the
+[应用审核FAQ (app review FAQ)](https://developer.huawei.com/consumer/cn/doc/app/50106) `[reported — these are
 JS-rendered; cited by URL from search index]`. Huawei's developer community publishes annual
 "avoid-the-pitfalls" and "top rejection reasons" round-ups for 2026
-([2026 上架避坑指南](https://developer.huawei.com/consumer/cn/forum/topic/0201221147113494505),
-[2026 高频驳回问题](https://developer.huawei.com/consumer/cn/forum/topic/0201218124295377819),
-[application-info 违规 TOP9](https://developer.huawei.com/consumer/cn/forum/topic/0208214242209847008)) `[reported]`.
+([2026 上架避坑指南 (2026 publishing pitfalls guide)](https://developer.huawei.com/consumer/cn/forum/topic/0201221147113494505),
+[2026 高频驳回问题 (2026 most frequent rejection issues)](https://developer.huawei.com/consumer/cn/forum/topic/0201218124295377819),
+[application-info 违规 TOP9 (top 9 application-info violations)](https://developer.huawei.com/consumer/cn/forum/topic/0208214242209847008)) `[reported]`.
 
 **Requirements flagged in those sources:** a Huawei developer account with **实名认证 (real-name
 verification)** ([overview](https://developer.huawei.com/consumer/cn/doc/start/itrna-0000001076878172),
 [FAQ](https://developer.huawei.com/consumer/cn/doc/start/identityverfication-0000001953723286)) `[reported]`,
 a privacy policy, and a **软件著作权 (software copyright) certificate** — the recurring community answer
-on whether 软著/备案 is required is *"yes for a commercial listing"* ([forum thread](https://developer.huawei.com/consumer/cn/forum/topic/0204224186632495393),
+on whether 软著 (software copyright) / 备案 (filing) is required is *"yes for a commercial listing"* ([forum thread](https://developer.huawei.com/consumer/cn/forum/topic/0204224186632495393),
 [copyright question](https://developer.huawei.com/consumer/cn/forum/topic/0203220036052953397)) `[reported]`.
 `[UNCERTAIN]`: whether a **non-Chinese** developer can complete 实名认证, the exact document list for a
 foreign individual vs. company, current review SLA in working days, and whether 软著/ICP备案 is
@@ -261,7 +261,7 @@ forced-update prompts exist for HarmonyOS apps the way they do on Google Play �
 in general but I could not verify them for HarmonyOS specifically.
 
 **Sideloading.** Partially possible, heavily restricted:
-- **Emulator: no certificate needed.** uni-app x states plainly that running on the **模拟器 requires no
+- **Emulator: no certificate needed.** uni-app x states plainly that running on the **模拟器 (emulator) requires no
   certificate**, while a **real device requires a debug certificate signed and bound to that specific
   device** ([doc](https://doc.dcloud.net.cn/uni-app-x/app-harmony/)) `[verified]`.
 - **Real device: debug certificate bound to registered devices.** Permissions are baked into the
@@ -275,7 +275,7 @@ in general but I could not verify them for HarmonyOS specifically.
 - **There is a legitimate internal-distribution channel.** AGC issues **内部测试 (internal testing)**
   certificates, letting you hand a `.hap` to specific devices via a distribution profile hosted on
   your own server, bypassing AppGallery — documented for uni-app x
-  ([doc §企业应用的内部分发](https://doc.dcloud.net.cn/uni-app-x/app-harmony/#internal-test),
+  ([doc §企业应用的内部分发 (internal distribution of enterprise apps)](https://doc.dcloud.net.cn/uni-app-x/app-harmony/#internal-test),
   [community tutorial](https://ask.dcloud.net.cn/article/42052)) `[reported]`. This is the closest
   HarmonyOS equivalent to TestFlight / Enterprise distribution and is the right channel for beta users
   of a self-hosted-server app.
@@ -360,7 +360,7 @@ because at that point no cross-platform framework helps either (they all end at 
    is supported and that macOS must grant DevEco **Hypervisor** permission, and that Intel Macs are
    excluded from emulator use ([guide](https://github.com/Octo-o-o-o/harmonyos-ai-workspace/blob/main/00-getting-started/01-environment-setup-mac.md),
    [Intel-Mac emulator thread](https://developer.huawei.com/consumer/cn/forum/topic/0202170099085388857)) `[reported]`,
-   but there are also reports of `DevEco Studio 无法创建模拟器，提示下载失败` on **arm64 Macs**
+   but there are also reports of `DevEco Studio 无法创建模拟器，提示下载失败` ("DevEco Studio cannot create an emulator; the download fails") on **arm64 Macs**
    ([forum](https://developer.huawei.com/consumer/cn/forum/topic/0204166373844850544)) `[reported]`.
    Official emulator requirements page: [ide-emulator-requirements](https://developer.huawei.com/consumer/cn/doc/HarmonyOS-Guides/ide-emulator-requirements)
    `[UNCERTAIN — JS-rendered, not fetched]`. **Treat "will the emulator work on an M4?" as an open

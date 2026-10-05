@@ -14,6 +14,7 @@ code and commits refer to them by path.
 | 4. Verification | [04-verification.md](04-verification.md) | How each claim is checked, and what the checks cannot see |
 | 5. Release | [05-release.md](05-release.md) | Building, signing and installing for each target |
 | 6. Maintenance | [06-known-issues.md](06-known-issues.md) | What is broken, unfinished or unverified, stated plainly |
+| 7. Upstream | [07-upstream.md](07-upstream.md) | What this is to Trilium: protocol, licence, and the routes to a closer relationship |
 
 ## Reading order for a newcomer
 
@@ -21,6 +22,7 @@ code and commits refer to them by path.
 2. [01-requirements.md](01-requirements.md) — what this is meant to do.
 3. [02-design.md](02-design.md), then [adr/0001-architecture.md](adr/0001-architecture.md) — why it is shaped this way.
 4. [06-known-issues.md](06-known-issues.md) — **before** trusting anything, read what is known not to work.
+5. [07-upstream.md](07-upstream.md) — if you are wondering why this is not a fork.
 
 ## A note on these documents
 

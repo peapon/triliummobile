@@ -2,8 +2,9 @@
 
 Research date: **2026-10-04** (Asia/Shanghai). Author: research subagent.
 Scope: offline-first Trilium Notes client. Phone = capture + search + read. **Pad = that plus keyboard
-editing and "手写笔输入编辑"**. UI plan: web core (HTML/CSS/JS) in a WebView (ArkWeb / WKWebView /
-Android WebView) wrapped by a thin native shell (hand-written ArkTS; Capacitor for Android/iOS).
+editing and "手写笔输入编辑" (stylus handwriting input editing)**. UI plan: web core (HTML/CSS/JS) in a
+WebView (ArkWeb / WKWebView / Android WebView) wrapped by a thin native shell (hand-written ArkTS;
+Capacitor for Android/iOS).
 
 > **Confidence.** `[verified]` = primary source fetched and read (official docs, source code, MDN
 > browser-compat-data JSON). `[reported]` = credible secondary (vendor forum, community). `[UNCERTAIN]`
@@ -16,7 +17,7 @@ Android WebView) wrapped by a thin native shell (hand-written ArkTS; Capacitor f
 
 ---
 
-## 1. "手写笔输入编辑" is three different products
+## 1. "手写笔输入编辑" (stylus handwriting input editing) is three different products
 
 ### (a) Handwriting-to-text (笔迹转文字 / Scribble)
 System IME converts pen strokes to typed characters in the focused field. **We write no code.** The only
@@ -28,12 +29,12 @@ the most capable one):
 |---|---|---|
 | iPadOS | **Yes** | `[verified]` "Scribble works in all standard text components — text fields, text views, search fields, and **editable fields in web content** — except password fields" — [Apple HIG](https://developer.apple.com/design/human-interface-guidelines/apple-pencil-and-scribble) |
 | Android 14+ (API 34) | **Yes** | `[verified]` "Android text entry fields, including EditText components and **WebView text widgets**, support stylus input by default" — [Stylus input in text fields](https://developer.android.com/develop/ui/views/touch-and-input/stylus-input/stylus-input-in-text-fields) |
-| HarmonyOS / ArkWeb | **No** | `[reported]` 全局手写 fires in ArkWeb `<input>` but **not** `<textarea>`/`contenteditable` — [Huawei forum](https://developer.huawei.com/consumer/cn/forum/topic/0210157907485611572) (mirror: [bbs.itying.com](http://bbs.itying.com/topic/67057700bb648a00d098581f)); a second thread reports web `input`/`textarea` rejecting stylus writes entirely — [Huawei forum](https://developer.huawei.com/consumer/cn/forum/topic/0202172489107476174) |
+| HarmonyOS / ArkWeb | **No** | `[reported]` 全局手写 (Global Handwriting) fires in ArkWeb `<input>` but **not** `<textarea>`/`contenteditable` — [Huawei forum](https://developer.huawei.com/consumer/cn/forum/topic/0210157907485611572) (mirror: [bbs.itying.com](http://bbs.itying.com/topic/67057700bb648a00d098581f)); a second thread reports web `input`/`textarea` rejecting stylus writes entirely — [Huawei forum](https://developer.huawei.com/consumer/cn/forum/topic/0202172489107476174) |
 
 ### (b) Ink annotation / freehand markup
 Strokes on a canvas layer over or behind note content. Requires stroke capture, a stroke model, a
 renderer, a persistence format, undo history. **All platform-agnostic → lives in the web core.** Only two
-parts are genuinely native: **low-latency rendering** (HarmonyOS 报点预测/`StylusFrameBoost`, Android
+parts are genuinely native: **low-latency rendering** (HarmonyOS 报点预测 (point prediction) / `StylusFrameBoost`, Android
 `GLFrontBufferedRenderer`+`input-motionprediction`, iOS PencilKit prediction) and **palm rejection**
 (free on iPadOS, app-implemented on Android, no app-level primitive on HarmonyOS).
 
@@ -57,13 +58,13 @@ Same machinery as (b) plus a note type, a thumbnail, and a **search story** — 
 `@kit.Penkit`; `SystemCapability.Stylus.Handwrite` / `SystemCapability.Stylus.StylusService`.
 `[verified]` [Pen Kit 简介](https://developer.huawei.com/consumer/cn/doc/doccenter-capabilities/pen-introduction).
 Five capabilities:
-1. **手写套件** — ArkUI component `HandwriteComponent` + `HandwriteController`.
-2. **报点预测** — predicts points ahead of the nib (跟手性); on by default in the suite, separately integrable.
-3. **一笔成形** — `InstantShapeGenerator`; a held stroke snaps to a clean shape.
+1. **手写套件 (handwriting suite)** — ArkUI component `HandwriteComponent` + `HandwriteController`.
+2. **报点预测** — predicts points ahead of the nib (跟手性, "pen tracking"); on by default in the suite, separately integrable.
+3. **一笔成形 (instant shape)** — `InstantShapeGenerator`; a held stroke snaps to a clean shape.
 4. **全局取色** — global colour picker.
 5. **手写交互** — `stylusInteraction.on('squeeze')` / `on('doubleTap')`, API 5.1.1(19)+ `[verified]`
    [stylusInteraction](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/pen-stylusinteraction).
-Plus `StylusFrameBoost`（跟手性加速）`[verified]` [StylusFrameBoost](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/pen-stylusframeboost).
+Plus `StylusFrameBoost`（跟手性加速, "pen-tracking acceleration"）`[verified]` [StylusFrameBoost](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/pen-stylusframeboost).
 
 ### 2.2 `HandwriteComponent` / `HandwriteController` — the catch
 `[verified]` [HandwriteController](https://developer.huawei.com/consumer/cn/doc/doccenter-references/api/pen-handwritecontroller),
@@ -96,7 +97,7 @@ Plus `StylusFrameBoost`（跟手性加速）`[verified]` [StylusFrameBoost](http
   stylus events but not touch events" — is a **System API** (`js-apis-window-sys.md`). That is Huawei's own
   mechanism; we cannot call it. `[verified]`
 - **One freebie:** ArkUI cancels finger touches while a stylus is active — `Cancel` fires when
-  "手指触摸过程中存在手写笔操作" (`ts-appendix-enums.md`). `[verified]` — **test this first**, it may cover
+  "手指触摸过程中存在手写笔操作" ("a stylus operation happens during a finger touch") (`ts-appendix-enums.md`). `[verified]` — **test this first**, it may cover
   most palm rejection for free.
 
 ### 2.4 Does ArkWeb receive stylus events?
@@ -113,13 +114,13 @@ Plus `StylusFrameBoost`（跟手性加速）`[verified]` [StylusFrameBoost](http
   `[reported]` (several Huawei forum threads on `registerJavaScriptProxy` timing bugs — a known rough edge).
 
 ### 2.5 Does HarmonyOS expose handwriting **recognition** to third parties? **No — IME/system-UI only.**
-`[reported]` A Huawei forum technical thread (2026-03-24) surveys every option and concludes Pen Kit "并没有暴露出'轨迹转文本'的接口". Its four evaluated approaches:
+`[reported]` A Huawei forum technical thread (2026-03-24) surveys every option and concludes Pen Kit "并没有暴露出'轨迹转文本'的接口" ("does not expose a trajectory-to-text interface"). Its four evaluated approaches:
 1. **Canvas snapshot → Core Vision Kit `textRecognition` (image OCR).** Pure visual OCR: wastes the pen's X/Y/Time/Pressure data, needs a cross-thread screenshot, too slow for "write and see text", fails on non-print handwriting.
 2. **Third-party C++ trajectory engines** (Zinnia, $P, LipiTk) over NAPI — offline, but CPU-only (no NPU), CJK-biased models, adds HAP size.
 3. **Pen Kit** — no such interface.
 4. **System 全局手写 + a `TextArea`** — fast recognition, but **it consumes the ink**: once text is committed the handwriting is gone, so you cannot keep a stroke layer *and* extract text.
 
-Huawei's official reply was a non-answer asking for business justification — `[verified]` that thread and reply exist, `[reported]` for the conclusions. [Forum thread](https://developer.huawei.com/consumer/cn/forum/topic/0207209760463484658). The nearest *supported* recognition is **Core Vision Kit 通用文字识别 (`textRecognition`)** — image OCR `[reported]` ([walkthrough](https://developer.huawei.com/consumer/cn/forum/topic/0204223551822397082)); a complaint thread exists on low accuracy. 全局手写 itself requires HarmonyOS 2+ and a supported M-Pencil generation `[verified]` ([support page](https://consumer.huawei.com/cn/support/content/zh-cn15822601/)).
+Huawei's official reply was a non-answer asking for business justification — `[verified]` that thread and reply exist, `[reported]` for the conclusions. [Forum thread](https://developer.huawei.com/consumer/cn/forum/topic/0207209760463484658). The nearest *supported* recognition is **Core Vision Kit 通用文字识别 (general text recognition, `textRecognition`)** — image OCR `[reported]` ([walkthrough](https://developer.huawei.com/consumer/cn/forum/topic/0204223551822397082)); a complaint thread exists on low accuracy. 全局手写 itself requires HarmonyOS 2+ and a supported M-Pencil generation `[verified]` ([support page](https://consumer.huawei.com/cn/support/content/zh-cn15822601/)).
 
 **Consequence: on HarmonyOS, "write with the pen and get text" inside our WebView is not achievable today via an official API.** Options: a native ArkTS handwriting field, post-hoc OCR, or our own recogniser.
 
@@ -278,7 +279,7 @@ adopt them later as render accelerators behind our own stroke model.**
 **6.1 Handwriting-to-text.** iPadOS: zero code (real `<textarea>`/`contenteditable`, plus the HIG editor
 rules from §3.1). Android 14+: zero code for `<textarea>`; test `contenteditable` and keep a hidden
 `<textarea>` pen-entry surface as fallback. **HarmonyOS: cannot be done in ArkWeb** — ship a small native
-ArkTS 手写输入 field (`TextInput`/`TextArea` where 全局手写/小艺输入法 work) whose result is pushed into the
+ArkTS 手写输入 field (`TextInput`/`TextArea` where 全局手写 / 小艺输入法 (Celia IME) work) whose result is pushed into the
 web editor via `registerJavaScriptProxy`/`runJavaScript`. This is the *only* mandatory native code for (a).
 
 **6.2 Ink.** One web-core implementation:
@@ -373,7 +374,8 @@ investment and may not be fully achievable today.
 **Could not be fetched raw (JS-rendered; text obtained via a rendering proxy, or not at all).** Treat any
 claim resting solely on these as one step removed:
 - All `developer.huawei.com` doc-center pages and forum threads. Thread `0210157907485611572` ("全局手写…在
-  textarea 和可编辑 div 标签上无法触发") returned page chrome only; its text came from the
+  textarea 和可编辑 div 标签上无法触发" — "global handwriting … cannot be triggered on textarea and
+  editable div elements") returned page chrome only; its text came from the
   [itying mirror](http://bbs.itying.com/topic/67057700bb648a00d098581f) → `[reported]`, not `[verified]`.
 - [Huawei forum: browser input/textarea rejects stylus writes](https://developer.huawei.com/consumer/cn/forum/topic/0202172489107476174)
   (body extracted; the official reply was only "file a ticket").

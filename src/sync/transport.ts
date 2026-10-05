@@ -66,9 +66,9 @@ export function randomString(length: number): string {
  *
  * Two mistakes were common enough to be worth handling rather than failing on:
  *
- * - **No scheme.** `114.66.28.183:29050` is not a URL with a host; `new URL` reads the dotted
+ * - **No scheme.** `192.0.2.10:8080` is not a URL with a host; `new URL` reads the dotted
  *   numeric prefix as a (invalid) scheme and treats the whole thing as a *relative* path. The
- *   request then goes to `<page origin>/114.66.28.183:29050/api/...`, which fails in a way that says
+ *   request then goes to `<page origin>/192.0.2.10:8080/api/...`, which fails in a way that says
  *   nothing about the address. Defaulting to `http://` matches what a self-hosted Trilium almost
  *   always is.
  * - **Stray whitespace.** Pasting an address usually brings a trailing space or newline with it, and

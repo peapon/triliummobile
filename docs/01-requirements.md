@@ -20,9 +20,9 @@ this client is the bug. Several fixes in the history are exactly that — see
 
 | Area | Phone | Tablet |
 |---|---|---|
-| Capture (速记) | yes — the primary act | yes |
-| Search (速查) | yes | yes |
-| Browse (查看) | yes | yes |
+| Capture (速记, *quick note*) | yes — the primary act | yes |
+| Search (速查, *quick lookup*) | yes | yes |
+| Browse (查看, *reading*) | yes | yes |
 | Editing | **entered deliberately, by long press** | light keyboard editing, toolbar always present |
 | Stylus | — | ink annotation and free drawing (v1) |
 
@@ -59,7 +59,7 @@ all of which are in [04-verification.md](04-verification.md).
 | R9 | Search is precise | Words, not substrings; titles weigh more; HTML tags are not content | `tools/feature-audit.ts` |
 | R10 | Trilium's hidden system notes are hidden | `_hidden`, `_llmChat`, … do not appear | `tools/feature-audit.ts` |
 | R11 | The library shows the server's own order | UI order equals `branches.notePosition` | `tools/feature-audit.ts` |
-| R12 | 速记 list is the inbox, newest first, at most 50 | Same list as a recursive query over the server's own rows | `tools/feature-audit.ts` |
+| R12 | The 速记 list is the inbox, newest first, at most 50 | Same list as a recursive query over the server's own rows | `tools/feature-audit.ts` |
 | R13 | Rename and delete notes | Both reach the server's database | E2E + server DB |
 | R14 | The editor takes files, not only pictures | Any MIME type, several at once | `tools/feature-audit.ts` |
 | R15 | AI chats can be created | A valid `llmChat` note, written locally, syncs like anything else | ADR 0001 |

@@ -142,8 +142,8 @@ describe("sync login under clock skew", () => {
 describe("normalising the server address", () => {
   it("adds a scheme when the user leaves it off", () => {
     // Without this the host parses as a *relative* path and every request goes to
-    // `<page origin>/114.66.28.183:29050/api/...`, which fails in a way that blames the network.
-    expect(normaliseHost("114.66.28.183:29050")).toBe("http://114.66.28.183:29050");
+    // `<page origin>/192.0.2.10:8080/api/...`, which fails in a way that blames the network.
+    expect(normaliseHost("192.0.2.10:8080")).toBe("http://192.0.2.10:8080");
     expect(normaliseHost("192.168.1.10:8080")).toBe("http://192.168.1.10:8080");
     expect(normaliseHost("trilium.example.com")).toBe("http://trilium.example.com");
   });
@@ -154,8 +154,8 @@ describe("normalising the server address", () => {
   });
 
   it("trims what a paste drags along", () => {
-    expect(normaliseHost("  http://114.66.28.183:29050  ")).toBe("http://114.66.28.183:29050");
-    expect(normaliseHost("http://114.66.28.183:29050\n")).toBe("http://114.66.28.183:29050");
+    expect(normaliseHost("  http://192.0.2.10:8080  ")).toBe("http://192.0.2.10:8080");
+    expect(normaliseHost("http://192.0.2.10:8080\n")).toBe("http://192.0.2.10:8080");
   });
 
   it("drops trailing slashes so paths do not double up", () => {
@@ -170,9 +170,9 @@ describe("normalising the server address", () => {
   });
 
   it("builds a URL a fetch can actually use", () => {
-    for (const input of ["114.66.28.183:29050", "http://114.66.28.183:29050", "http://114.66.28.183:29050/"]) {
+    for (const input of ["192.0.2.10:8080", "http://192.0.2.10:8080", "http://192.0.2.10:8080/"]) {
       const url = new URL(`${normaliseHost(input)}/api/setup/status`);
-      expect(url.origin).toBe("http://114.66.28.183:29050");
+      expect(url.origin).toBe("http://192.0.2.10:8080");
     }
   });
 });

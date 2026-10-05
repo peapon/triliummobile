@@ -40,7 +40,7 @@ touch-native, and available on HarmonyOS**.
 - **This machine has no mobile toolchain at all**: no DevEco Studio / `ohpm` / `hvigor`, no Android
   SDK, no full Xcode (CommandLineTools only), and only JDK 25 (DevEco bundles JDK 17 and breaks with a
   foreign JDK on `PATH`). Android and iOS builds are equally impossible today.
-- **Real-device HarmonyOS install requires a Huawei account with 实名认证 and a device-bound debug
+- **Real-device HarmonyOS install requires a Huawei account with 实名认证 (*real-name verification*) and a device-bound debug
   certificate, and the signing step is GUI-only** — it cannot be completed from the CLI.
 
 ---
@@ -278,7 +278,7 @@ server, so the read-only probe (`tools/probe.ts`, which never calls `transport.u
 against it:
 
 ```
-Server   http://114.66.28.183:29050
+Server   http://192.0.2.10:8080
 Version  0.106.0   db=240   sync=39
 Login OK serverInstanceId=E78AkKwZd5zq  maxEntityChangeId=58,413
 
@@ -397,7 +397,7 @@ documentation:
 
 **Blocking, needs a human**
 
-1. **Can the owner complete Huawei 实名认证 and register a debug device?** Without it there is no
+1. **Can the owner complete Huawei 实名认证 (*real-name verification*) and register a debug device?** Without it there is no
    on-device testing and no AppGallery publishing. Unverified for non-Chinese developers.
    Confirmed: the **HarmonyOS** SDK download itself is account-gated (its API chain runs through
    `getToolVersionDownloadUrl` + `signAgreement` + `querySign`), and automatic signing is GUI-only.

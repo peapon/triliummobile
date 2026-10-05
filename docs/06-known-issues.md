@@ -51,7 +51,7 @@ Each of these was found on a device, after a browser suite had passed.
 | The edge swipe exited the app | The gesture is answered by `onBackPress()` on the page, not `UIAbility.onBackPressed()` |
 | A note with attachments arrived twice | An unguarded save ran once per tap; the second had an empty queue, hence one copy with files and one without |
 | A PDF could not be opened anywhere | The reference stored a relative URL that another client absolutised into `https://api/…` **inside the note** |
-| Buttons wrapped their own labels | A squeezed button wrapped: 图片 drew as 图 over 片 |
+| Buttons wrapped their own labels | A squeezed button wrapped its own text: 图片 (*picture*) drew as 图 over 片 |
 | Search was broken on device only | `sqlite-wasm` derives a SQL function's arity from `Function.length`; a rest parameter gave 0 |
 | Attachments uploaded from Android | Not an issue — the data was correct on both sides; the faults were the two above |
 | The library would not descend | The test was `type === "book"`; only 23 of 152 parents in the owner's vault are books |

@@ -21,15 +21,15 @@ of the screen. Everything else is content.
 
 | # | Screen | Structure |
 |---|---|---|
-| 1 | 主页 | Recent-notes list. Each row: title, then a metadata line (people, date). |
-| 2 | 搜索 | Top search field with `取消` at the right; below it a `搜索历史` section of past queries. |
-| 3 | 创建新速记 | **Bottom sheet** titled `新建小记 [Beta]`: a row of creation kinds (`空白小记 拍摄 图片 OCR识图 待办`), then `新建文档知识库` (`空白文档 知识库`), then `从模板新建文档` with template cards, then `取消`. |
-| 4 | 编辑新速记 | Full-screen editor: `×` close at the left, `完成` at the right, placeholder `记你想记…`, `。。。` overflow. |
-| 5 | AI创作 | Yuque's own AI assistant. **Not adopted** — it is a Yuque feature, not a Trilium one. |
-| 6 | 知识库 | List of knowledge bases. Each row: leading icon, name, then `共 N 篇文档 · <date>`. A `+` sits at the lower right. |
-| 7 | 笔记视图 | `<` back, `<title> ·语雀`, avatar, `……`. Then the document title, author, and a `目录` list of documents. |
-| 8 | 系统设置 | **Bottom sheet**: `布局` (列表 / 书架), `筛选` (我个人的 / 邀请协作的), `排序方式（常用置顶）` (按知识库名称 / 按更新时间 / 按创建时间), then `取消`. Each group is a labelled row with its current value and a `>`. |
-| 9 | 书架视图 | Two-column **grid** of cards: cover image, title, and a count. Section header `最近文档 >`. |
+| 1 | 主页 (Home) | Recent-notes list. Each row: title, then a metadata line (people, date). |
+| 2 | 搜索 (Search) | Top search field with `取消` (Cancel) at the right; below it a `搜索历史` (search history) section of past queries. |
+| 3 | 创建新速记 (Create new quick note) | **Bottom sheet** titled `新建小记 [Beta]` (new quick note [Beta]): a row of creation kinds (`空白小记 拍摄 图片 OCR识图 待办` — blank quick note, capture, image, OCR image recognition, to-do), then `新建文档知识库` (`空白文档 知识库` — new document / knowledge base: blank document, knowledge base), then `从模板新建文档` (new document from template) with template cards, then `取消` (Cancel). |
+| 4 | 编辑新速记 (Edit new quick note) | Full-screen editor: `×` close at the left, `完成` (Done) at the right, placeholder `记你想记…` (write whatever you want…), `。。。` overflow. |
+| 5 | AI创作 (AI creation) | Yuque's own AI assistant. **Not adopted** — it is a Yuque feature, not a Trilium one. |
+| 6 | 知识库 (Knowledge base) | List of knowledge bases. Each row: leading icon, name, then `共 N 篇文档 · <date>` (N documents). A `+` sits at the lower right. |
+| 7 | 笔记视图 (Note view) | `<` back, `<title> ·语雀`, avatar, `……`. Then the document title, author, and a `目录` (contents) list of documents. |
+| 8 | 系统设置 (System settings) | **Bottom sheet**: `布局` (layout: `列表` list / `书架` bookshelf), `筛选` (filter: `我个人的` mine / `邀请协作的` shared with me), `排序方式（常用置顶）` (sort order, most-used pinned: `按知识库名称` by knowledge-base name / `按更新时间` by update time / `按创建时间` by creation time), then `取消` (Cancel). Each group is a labelled row with its current value and a `>`. |
+| 9 | 书架视图 (Bookshelf view) | Two-column **grid** of cards: cover image, title, and a count. Section header `最近文档 >` (recent documents). |
 
 ## Patterns worth borrowing
 
@@ -59,4 +59,5 @@ Functionality stays Trilium's; only the interaction is borrowed. Nothing below i
 | `目录` | A book's children, which the drill-down already shows |
 
 Deliberately **not** adopted, because Trilium has no such feature and inventing one is out of scope:
-`拍摄`, `OCR 识图`, `模板`, `AI 创作`, collaborative filtering (`邀请协作的`), and search history.
+`拍摄` (capture), `OCR 识图` (OCR image recognition), `模板` (templates), `AI 创作` (AI creation),
+collaborative filtering (`邀请协作的`, shared with me), and search history.

@@ -53,7 +53,7 @@ escapes the viewport, text clipped by its container, a tap target under 44px, an
 drawn on two lines.
 
 The last one is measured with `Range.getClientRects()`, which returns one rect per line box
-— so "图片" and "图" over "片" are distinguishable. It is limited to pure-text buttons,
+— so 图片 (*picture*, one line) and 图 over 片 (two) are distinguishable. It is limited to pure-text buttons,
 because a row is a button containing a title and a meta line and is multi-line by design;
 without that restriction it reported 100 findings, all of them false.
 
