@@ -853,10 +853,13 @@ async function renderNotes(): Promise<string> {
       ${t("notes.empty")}<br />${t("notes.emptyHint")}
     </div>`;
 
+  // `50+` rather than `50` once the list is capped, so a full page does not read as the whole inbox.
+  const count = `${notes.length}${notes.length >= QUICK_NOTE_LIMIT ? "+" : ""}`;
+
   return `
     <div class="section-head">
       <span>${t("notes.recent")}</span>
-      <span class="section-count">${t("notes.count", { count: `${notes.length}${notes.length >= QUICK_NOTE_LIMIT ? "+" : ""}` })}</span>
+      <span class="section-count">${t("notes.count", { count })}</span>
     </div>
 
     ${notes.length === 0 ? empty : renderNoteCollection(notes, "notes")}
@@ -1930,7 +1933,12 @@ async function addAttachmentToOpenNote(): Promise<void> {
     }
 
     await refreshChrome();
-    showToast(files.length === 1 ? t("note.attachedOne", { name: files[0]!.name }) : t("note.attachedMany", { count: files.length }), false);
+    showToast(
+      files.length === 1
+        ? t("note.attachedOne", { name: files[0]!.name })
+        : t("note.attachedMany", { count: files.length }),
+      false
+    );
     await render();
   } catch (error) {
     showToast(error instanceof Error ? error.message : String(error), true);
