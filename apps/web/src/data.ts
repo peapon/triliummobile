@@ -67,6 +67,16 @@ export class NoteQueries {
   private static readonly CHILD_COUNT =
     "(SELECT COUNT(*) FROM branches cb WHERE cb.parentNoteId = n.noteId AND cb.isDeleted = 0)";
 
+  /**
+   * Trilium keeps its system notes under ids beginning with `_` — `_hidden`, `_llmChat`, `_search`,
+   * `_sqlConsole` and the rest — and excludes them from the tree it shows. They are not the user's
+   * notes; `_hidden` is where the user's own hidden ones live.
+   *
+   * Written once so every list agrees: leaving it out put "Hidden Notes" at the top of the library
+   * and let system notes surface in search.
+   */
+  private static readonly NOT_HIDDEN = "n.noteId NOT LIKE '\\_%' ESCAPE '\\'";
+
   /** The note's own icon and colour, as Trilium stores them: labels called `iconClass` and `color`. */
   private static readonly LABEL = (name: string) =>
     `(SELECT a.value FROM attributes a WHERE a.noteId = n.noteId AND a.type = 'label'` +
@@ -81,7 +91,7 @@ export class NoteQueries {
               ${NoteQueries.LABEL("color")} AS color
          FROM branches b
          JOIN notes n ON n.noteId = b.noteId
-        WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0
+        WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0 AND ${NoteQueries.NOT_HIDDEN}
         ORDER BY b.notePosition`,
       [parentNoteId]
     );
@@ -91,7 +101,7 @@ export class NoteQueries {
     const row = this.db.get<{ c: number }>(
       `SELECT COUNT(*) AS c
          FROM branches b JOIN notes n ON n.noteId = b.noteId
-        WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0`,
+        WHERE b.parentNoteId = ? AND b.isDeleted = 0 AND n.isDeleted = 0 AND ${NoteQueries.NOT_HIDDEN}`,
       [parentNoteId]
     );
     return row?.c ?? 0;
@@ -210,6 +220,7 @@ export class NoteQueries {
          FROM notes n
          LEFT JOIN blobs b ON b.blobId = n.blobId
         WHERE n.isDeleted = 0
+          AND ${NoteQueries.NOT_HIDDEN}
           AND (n.title LIKE ? ESCAPE '\\'
                OR CAST(b.content AS TEXT) LIKE ? ESCAPE '\\')
         ORDER BY n.utcDateModified DESC
@@ -232,7 +243,7 @@ export class NoteQueries {
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
               ${NoteQueries.LABEL("color")} AS color
          FROM notes n
-        WHERE n.isDeleted = 0 AND n.type = ?
+        WHERE n.isDeleted = 0 AND n.type = ? AND ${NoteQueries.NOT_HIDDEN}
         ORDER BY n.utcDateModified DESC
         LIMIT ?`,
       [type, limit]
@@ -263,6 +274,7 @@ export class NoteQueries {
               ${NoteQueries.LABEL("color")} AS color
          FROM notes n
         WHERE n.isDeleted = 0 AND n.noteId IN (SELECT noteId FROM subtree) AND n.noteId != ?
+          AND ${NoteQueries.NOT_HIDDEN}
         ORDER BY n.utcDateCreated DESC
         LIMIT ?`,
       [inboxNoteId, inboxNoteId, limit]
@@ -277,7 +289,7 @@ export class NoteQueries {
               ${NoteQueries.LABEL("iconClass")} AS iconClass,
               ${NoteQueries.LABEL("color")} AS color
          FROM notes n
-        WHERE n.isDeleted = 0 AND n.noteId != ?
+        WHERE n.isDeleted = 0 AND n.noteId != ? AND ${NoteQueries.NOT_HIDDEN}
         ORDER BY n.utcDateModified DESC
         LIMIT ?`,
       [ROOT_NOTE_ID, limit]
