@@ -8,7 +8,7 @@ ones deliberately: they are part of the status, not a footnote.
 | # | Issue | Impact | State |
 |---|---|---|---|
 | K1 | **iOS / iPadOS is not built** | No Apple build exists | Requirements known, see below |
-| K2 | **The Android APK has not been run on a device** | It compiles and the package contents are verified; the device is not | Built, unverified |
+| K2 | ~~The Android APK has not been run on a device~~ | — | **Resolved** — runs on a HarmonyOS 4.2 tablet |
 | K3 | **Stylus input is unverified on hardware** | `pointerType === "pen"` is handled, but never observed | No device with a pen has been available |
 | K4 | **An AI message cannot be sent** | A chat can be created; it cannot be used | The server owns the model |
 | K5 | **Handwriting recognition is deferred** | Ink only, no text | By decision, not omission |
@@ -29,6 +29,11 @@ ones deliberately: they are part of the status, not a footnote.
   `http://localhost:<port>`, which is a secure context.
 
 ### K6: the WebView version
+
+**Answered in practice.** An APK was installed and used on a HarmonyOS 4.2 tablet, which means
+that device's WebView is recent enough for OPFS — the local database depends on it, and nothing
+would have run without it. The paragraph below is kept because the reasoning still applies to any
+other device.
 
 The HarmonyOS 4.x tablet is Android-compatible, so an APK can be installed. The device's
 WebView is updated separately from the browser, and the application needs **Chromium 102** for
@@ -57,7 +62,7 @@ contributed one as expected.
 | The attachment-reference fix works | note content read from a real server; browser click path | on the packaged device |
 | The duplicate-note fix works | reproduced, then guarded; 64 unit tests + 31 E2E | on the packaged device |
 | The label-wrap fix works | layout audit, `Range.getClientRects()` | rendering engines other than Chromium/ArkWeb |
-| The Android shell works | it builds; the APK contents are verified | **it has never been run** |
+| The Android shell works | **installed and used on a HarmonyOS 4.2 tablet** | which features were exercised, beyond installing and running |
 | The back gesture works | device log and owner confirmation | — |
 | `pointerType === "pen"` | not measured; ArkWeb's pointer-event surface is complete | **hardware with a stylus** |
 

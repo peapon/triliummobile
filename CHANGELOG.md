@@ -8,6 +8,13 @@ rather than by version. Entries describe user-visible outcomes, not commits.
 
 ## [2026-10-06]
 
+### Fixed
+
+- Documentation no longer claims the Android build is unverified. It was installed and used on a
+  HarmonyOS 4.2 tablet, which also settles the open question about that device's WebView: OPFS
+  works there, since the local database would not have opened otherwise.
+
+
 ### Added
 
 - Chinese and English interfaces, switchable in settings, following the vault's `locale` by default.

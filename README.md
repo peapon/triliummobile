@@ -23,7 +23,7 @@ The architecture is recorded in [docs/adr/0001-architecture.md](docs/adr/0001-ar
 | Rename / delete notes | **Working and verified against the server's own database** |
 | Automatic sync | **Working** — off, or 1 minute to 4 hours |
 | HarmonyOS app (`.hap`) | **Running and syncing both ways on a real device** |
-| Android app (`.apk`) | **Builds; the package is verified; not yet run on a device** |
+| Android app (`.apk`) | **Runs on a HarmonyOS 4.2 tablet** — installed and used on real hardware |
 | iOS / iPadOS | **Not built** — see [docs/known-issues.md](docs/known-issues.md) |
 | Stylus `pointerType === "pen"` | **Unverified** — needs a physical device with a stylus |
 | Sending an AI message | **Not possible** — a chat can be created; the server owns the model |
