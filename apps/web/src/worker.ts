@@ -405,6 +405,41 @@ async function configure(serverHost: string, password: string): Promise<void> {
   session = null;
 }
 
+/**
+ * A sync round in progress, if any.
+ *
+ * `sync()` owns the database connection and advances the pull cursor in the journal, so two rounds
+ * running at once is not a slow path — it is a wrong one. Both would read the same cursor and push
+ * the same rows, and the second would see the first's half-applied pull. That produces a content-hash
+ * mismatch, and a mismatch makes the engine refuse to push, which leaves the app sitting at "sync
+ * failed" with no way forward.
+ *
+ * There are nine places that ask for a sync — the interval timer, return to foreground, regaining the
+ * network, the manual button, four setup paths — so overlap is reachable by ordinary use: the timer
+ * firing just as the user taps the button is enough.
+ *
+ * Callers share the round rather than being turned away, so `await syncOnce()` still means "a round
+ * has finished".
+ */
+let syncInFlight: Promise<{
+  ok: boolean;
+  pulled: number;
+  pushed: number;
+  diverged: number;
+  durationMs: number;
+  message: string;
+}> | null = null;
+
+function syncOnce(): ReturnType<typeof sync> {
+  if (syncInFlight) return syncInFlight;
+
+  const round = sync().finally(() => {
+    if (syncInFlight === round) syncInFlight = null;
+  });
+  syncInFlight = round;
+  return round;
+}
+
 async function sync(): Promise<{
   ok: boolean;
   pulled: number;
@@ -684,7 +719,7 @@ async function handle(request: Exclude<RpcRequest, { method: "ready" }>): Promis
     case "configureWithSecret":
       return configureWithSecret(request.params[0], request.params[1]);
     case "sync":
-      return sync();
+      return syncOnce();
     case "pendingPushCount": {
       // Before a login there is no peer to compare against, so the echo filter cannot run. The
       // honest lower bound is "changes this device originated" — rows stamped with our own instance

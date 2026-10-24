@@ -2170,28 +2170,58 @@ function updateInkHint(): void {
  * silent when everything is fine, so a *manual* sync needs a result it can point at; an automatic
  * one does not, and announcing every boot sync would be noise.
  */
+/**
+ * Run one sync round, or join the one already running.
+ *
+ * Nine places ask for a sync — the interval timer, returning to the foreground, regaining the
+ * network, the manual button, four setup paths — so two of them landing together is ordinary use,
+ * not an edge case. They used to all proceed: `state.syncing` was set but never checked, despite a
+ * comment claiming otherwise. Two rounds then raced the same pull cursor, which can leave the
+ * content-hash check reporting a divergence, and a divergence stops the engine pushing — the app
+ * sits at "sync failed" and nothing gets through. That was the freeze.
+ *
+ * Callers now share the round instead of being turned away, so a tap on 立即同步 waits and then
+ * shows the outcome rather than doing nothing.
+ */
+let syncInFlight: Promise<void> | null = null;
+
 async function runSync(announce = false): Promise<void> {
-  state.syncing = true;
-  state.lastMessage = t("setup.connecting");
-  await render();
+  if (syncInFlight) {
+    await syncInFlight;
+    if (announce) showToast(state.lastMessage || t("sync.done"), !state.lastOk);
+    return;
+  }
 
-  try {
-    const outcome = await api.sync();
-    state.lastOk = outcome.ok;
-    state.lastMessage = outcome.message;
-
-    // The bar only shows "同步失败"; the sentence that explains it arrives as a toast.
-    if (!outcome.ok) showToast(outcome.message || t("sync.failed"), true);
-    else if (announce) showToast(outcome.message || t("sync.done"), false);
-  } catch (error) {
-    state.lastOk = false;
-    state.lastMessage = error instanceof Error ? error.message : String(error);
-    showToast(state.lastMessage, true);
-  } finally {
-    state.syncing = false;
-    state.progress = null;
-    await refreshChrome();
+  const round = (async () => {
+    state.syncing = true;
+    state.lastMessage = t("setup.connecting");
     await render();
+
+    try {
+      const outcome = await api.sync();
+      state.lastOk = outcome.ok;
+      state.lastMessage = outcome.message;
+
+      // The bar only shows "同步失败"; the sentence that explains it arrives as a toast.
+      if (!outcome.ok) showToast(outcome.message || t("sync.failed"), true);
+      else if (announce) showToast(outcome.message || t("sync.done"), false);
+    } catch (error) {
+      state.lastOk = false;
+      state.lastMessage = error instanceof Error ? error.message : String(error);
+      showToast(state.lastMessage, true);
+    } finally {
+      state.syncing = false;
+      state.progress = null;
+      await refreshChrome();
+      await render();
+    }
+  })();
+
+  syncInFlight = round;
+  try {
+    await round;
+  } finally {
+    if (syncInFlight === round) syncInFlight = null;
   }
 }
 

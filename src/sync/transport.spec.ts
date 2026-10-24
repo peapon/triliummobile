@@ -184,3 +184,46 @@ describe("utcDateTimeStr", () => {
     expect(Date.parse(formatted)).toBe(Date.UTC(2026, 9, 5, 1, 2, 3, 456));
   });
 });
+
+/**
+ * A request that never gets an answer must fail rather than hang.
+ *
+ * This is the difference between "sync failed, try again" and an application that shows 同步中 forever.
+ * A socket that is accepted and never answered is ordinary on a mobile network, and nothing above this
+ * layer has a timeout of its own: the sync round would simply never settle, so `state.syncing` would
+ * never clear and the sync button would stay disabled with no way out.
+ *
+ * The deadline is settable so this runs in milliseconds rather than three minutes.
+ */
+describe("a request the server never answers", () => {
+  const silent = (() => new Promise<Response>(() => {})) as unknown as typeof fetch;
+
+  const make = () =>
+    new SyncTransport({
+      serverHost: "192.0.2.10:8080",
+      documentSecret: SECRET,
+      syncVersion: 39,
+      fetchImpl: silent,
+      requestTimeoutMs: 40
+    });
+
+  it("rejects instead of hanging forever", async () => {
+    const transport = make();
+    await expect(transport.getSetupStatus()).rejects.toThrow(/timed out/i);
+  });
+
+  it("names the request and the deadline, so the message is actionable", async () => {
+    const transport = make();
+    await expect(transport.getSetupStatus()).rejects.toThrow(/GET \/api\/setup\/status timed out after 0s/);
+  });
+
+  it("defaults to three minutes when nothing is configured", () => {
+    const transport = new SyncTransport({
+      serverHost: "192.0.2.10:8080",
+      documentSecret: SECRET,
+      syncVersion: 39,
+      fetchImpl: silent
+    });
+    expect(transport.requestTimeout).toBe(180_000);
+  });
+});

@@ -45,6 +45,11 @@ export interface TransportOptions {
   maxBlobContentSize?: number;
   /** Injectable for tests. */
   fetchImpl?: typeof fetch;
+  /**
+   * How long one request may take before it is abandoned. Defaults to three minutes; a test passes
+   * something small.
+   */
+  requestTimeoutMs?: number;
 }
 
 /** `dateUtils.utcDateTimeStr()` — ISO-8601 with a space instead of `T`, keeping the trailing `Z`. */
@@ -115,6 +120,7 @@ export class SyncTransport {
   private readonly serverHost: string;
   private readonly documentSecret: string;
   private readonly fetchImpl: typeof fetch;
+  private readonly requestTimeoutMs: number;
 
   /** Cookie name=value pairs, keyed by name so a later Set-Cookie replaces an earlier one. */
   private readonly cookies = new Map<string, string>();
@@ -142,6 +148,12 @@ export class SyncTransport {
     // requires) an unbound `fetch` throws "Illegal invocation" because it is called with the
     // wrong receiver.
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch.bind(globalThis);
+    this.requestTimeoutMs = options.requestTimeoutMs ?? SyncTransport.DEFAULT_REQUEST_TIMEOUT_MS;
+  }
+
+  /** Exposed so the deadline is part of the contract rather than a number in a call site. */
+  get requestTimeout(): number {
+    return this.requestTimeoutMs;
   }
 
   /** The server's instance id, learned at login. */
@@ -180,12 +192,69 @@ export class SyncTransport {
     }
   }
 
+  /**
+   * How long a single request may take before it is abandoned.
+   *
+   * Generous, because a paged push of a multi-megabyte blob over a phone connection is legitimately
+   * slow. It exists to convert "waited forever" into "failed, try again" — a socket that is accepted
+   * and then never answered is common enough on mobile networks, and without this the sync round never
+   * settles, `state.syncing` never clears, and the app sits showing 同步中 forever with no way to act.
+   */
+  static readonly DEFAULT_REQUEST_TIMEOUT_MS = 180_000;
+
+  /**
+   * Settle a promise on a deadline, whatever it is doing.
+   *
+   * Needed as well as an `AbortSignal` because the native shells answer through a bridge that ignores
+   * one — their request cannot be cancelled from here, only stopped being waited for.
+   */
+  private static deadline<T>(work: Promise<T>, ms: number, what: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        reject(new Error(`${what} timed out after ${Math.round(ms / 1000)}s`));
+      }, ms);
+
+      work.then(
+        (value) => {
+          clearTimeout(timer);
+          resolve(value);
+        },
+        (error: unknown) => {
+          clearTimeout(timer);
+          reject(error as Error);
+        }
+      );
+    });
+  }
+
   private async request(path: string, init: RequestInit = {}): Promise<Response> {
     const headers = new Headers(init.headers);
     const cookie = this.cookieHeader();
     if (cookie) headers.set("Cookie", cookie);
 
-    const response = await this.fetchImpl(`${this.serverHost}${path}`, { ...init, headers });
+    // The signal lets a real `fetch` cancel the socket; the deadline covers a bridge that cannot.
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.requestTimeoutMs);
+
+    let response: Response;
+    try {
+      response = await SyncTransport.deadline(
+        this.fetchImpl(`${this.serverHost}${path}`, { ...init, headers, signal: controller.signal }),
+        this.requestTimeoutMs,
+        `${init.method ?? "GET"} ${path.split("?")[0]}`
+      );
+    } catch (error) {
+      // An abort surfaces as a bare DOMException; say what actually happened.
+      if (error instanceof Error && error.name === "AbortError") {
+        throw new Error(
+          `${init.method ?? "GET"} ${path.split("?")[0]} timed out after ${Math.round(this.requestTimeoutMs / 1000)}s`
+        );
+      }
+      throw error;
+    } finally {
+      clearTimeout(timer);
+    }
+
     this.captureCookies(response);
     this.measureClockOffset(response);
     return response;
